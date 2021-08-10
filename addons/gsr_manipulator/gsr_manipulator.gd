@@ -40,6 +40,9 @@ var local := false
 
 # Set to 0.1 when smoothing movement is required as shift is held down.
 var action_strength = 1.0
+# Whether the ctrl key is held down while manipulating. Reverses the effect of
+# the snap button on the UI.
+var snap_toggle = false
 
 
 # Numeric string entered to set parameter for manipulation
@@ -138,8 +141,8 @@ func is_snapping():
 	
 	var button: ToolButton = UI.spatial_snap_toolbutton(self)
 	if button != null:
-		return button.pressed
-	return false
+		return (button.pressed && !snap_toggle) || (!button.pressed && snap_toggle)
+	return snap_toggle
 
 
 func grab_step_size():
@@ -218,6 +221,8 @@ func forward_spatial_gui_input(camera, event):
 		if event.scancode == KEY_SHIFT:
 			save_manipulation_mousepos()
 			action_strength = 0.1 if event.pressed else 1.0
+		elif event.scancode == KEY_CONTROL:
+			snap_toggle = !snap_toggle
 			
 		if !event.pressed:
 			return false
