@@ -44,6 +44,8 @@ var action_strength = 1.0
 # the snap button on the UI.
 var snap_toggle = false
 
+# Whether the z and y shortcuts are swapped when locking to an axis.
+var zy_swapped = false
 
 # Numeric string entered to set parameter for manipulation
 var numerics: String
@@ -91,14 +93,64 @@ var gizmohidden = false
 var saved_gizmo_size
 
 
+# Button added to toolbar to make the z key toggle the vertical axis like in Blender.
+var toolbutton_z_up: ToolButton
+
+
 func _enter_tree():
-	pass
+	add_toolbuttons()
+	register_callbacks(true)
 
 
 func _exit_tree():
+	UI.save_config({ "settings" : { "z_up" : zy_swapped } })
+	register_callbacks(false)
+	remove_toolbuttons()
 	# Make sure we don't hold a reference of anything
 	reset()
 	selected_objects = weakref(null)
+
+
+func add_toolbuttons():
+	if toolbutton_z_up == null:
+		toolbutton_z_up = ToolButton.new()
+		toolbutton_z_up.toggle_mode = true
+		toolbutton_z_up.hint_tooltip = "Swap z and y axis lock shortcuts"
+		toolbutton_z_up.connect("toggled", self, "_on_toolbutton_z_up_toggled")
+		if UI.is_dark_theme(self):
+			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
+		else:
+			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
+
+		toolbutton_z_up.pressed = UI.get_config_property("settings", "z_up", false)
+		UI.spatial_toolbar(self).add_child(toolbutton_z_up)
+
+	
+func remove_toolbuttons():
+	if toolbutton_z_up != null:
+		if toolbutton_z_up.get_parent() != null:
+			toolbutton_z_up.get_parent().remove_child(toolbutton_z_up)
+		toolbutton_z_up.free()
+		toolbutton_z_up = null
+
+
+func _on_settings_changed():
+	if toolbutton_z_up != null:
+		if UI.is_dark_theme(self):
+			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
+		else:
+			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
+	
+
+func register_callbacks(register: bool):
+	if register:
+		UI.connect_settings_changed(self, "_on_settings_changed")
+	else:
+		UI.disconnect_settings_changed(self, "_on_settings_changed")
+
+
+func _on_toolbutton_z_up_toggled(toggled: bool):
+	zy_swapped = toggled
 
 
 func handles(object):
@@ -251,10 +303,16 @@ func forward_spatial_gui_input(camera, event):
 				change_limit(camera, GSRLimit.X | (GSRLimit.REVERSE if event.shift else 0))
 				handled = true
 			elif char(event.unicode) == 'y' || char(event.unicode) == 'Y':
-				change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
+				if !zy_swapped:
+					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
+				else:
+					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
 				handled = true
 			elif char(event.unicode) == 'z' || char(event.unicode) == 'Z':
-				change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
+				if !zy_swapped:
+					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
+				else:
+					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
 				handled = true
 			elif (char(event.unicode) >= '0' && char(event.unicode) <= '9' ||
 					char(event.unicode) == '.' || char(event.unicode) == '-'):

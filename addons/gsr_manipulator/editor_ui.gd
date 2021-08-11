@@ -15,6 +15,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+tool
 extends Object
 
 func _ready():
@@ -65,4 +66,50 @@ static func set_setting(editor: EditorPlugin, settingname: String, value):
 	var ei: EditorInterface = editor.get_editor_interface()
 	var es: EditorSettings = ei.get_editor_settings()
 	es.set_setting(settingname, value)
+
+
+static func is_dark_theme(editor: EditorPlugin) -> bool:
+	var es := editor.get_editor_interface().get_editor_settings()
 	
+	var AUTO_COLOR = 0
+	var LIGHT_COLOR = 2
+	var base_color: Color = es.get_setting("interface/theme/base_color")
+	var icon_font_color_setting = es.get_setting("interface/theme/icon_and_font_color")
+	return (icon_font_color_setting == AUTO_COLOR && ((base_color.r + base_color.g + base_color.b) / 3.0) < 0.5) || icon_font_color_setting == LIGHT_COLOR;
+
+
+static func connect_settings_changed(editor: EditorPlugin, callback: String):
+	var es := editor.get_editor_interface().get_editor_settings()
+	es.connect("settings_changed", editor, callback)
+
+
+static func disconnect_settings_changed(editor: EditorPlugin, callback: String):
+	var es := editor.get_editor_interface().get_editor_settings()
+	es.disconnect("settings_changed", editor, callback)
+
+
+static func get_config_property(section: String, name: String, default):
+	var config = ConfigFile.new()
+	if config.load("user://gsr.cfg") != OK:
+		return default
+	else:
+		return config.get_value(section, name, default)
+	
+	
+static func save_config(data):
+	print("Saving config")
+	var config = ConfigFile.new()
+	# We don't care if it didn't load, just want to make sure that we get all
+	# the keys if it does load.
+	config.load("user://gsr.cfg")
+	for key in data.keys():
+		if typeof(key) != TYPE_STRING || !(data[key] is Dictionary):
+			continue
+		for key2 in data[key].keys():
+			if typeof(key2) != TYPE_STRING:
+				continue
+			print("Save value: ")
+			config.set_value(key, key2, data[key][key2])
+	config.save("user://gsr.cfg")
+	print("Config saved")
+
