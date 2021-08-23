@@ -18,17 +18,24 @@
 tool
 extends EditorPlugin
 
-const UI = preload("./editor_ui.gd")
+const UI = preload("./util/editor_ui.gd")
+const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
+
+# Separate script for stuff that needs to persist
+var settings: PluginSettings = PluginSettings.new()
+
 
 # Current manipulation of objects
 enum GSRState { NONE, GRAB, ROTATE, SCALE, SCENE_PLACEMENT }
 # Axis of manipulation
 enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
+
 # Objects manipulated by this plugin are selected
 var selected := false
 # Saved objects for hiding their gizmos.
 var selected_objects: WeakRef = weakref(null)
+
 
 # Current manipulation of objects from GSRState
 var state: int = GSRState.NONE
@@ -40,13 +47,11 @@ var selection := []
 var local := false
 
 # Set to 0.1 when smoothing movement is required as shift is held down.
-var action_strength = 1.0
+var smoothing := false
 # Whether the ctrl key is held down while manipulating. Reverses the effect of
 # the snap button on the UI.
 var snap_toggle = false
 
-# Whether the z and y shortcuts are swapped when locking to an axis.
-var zy_swapped = false
 
 # Numeric string entered to set parameter for manipulation
 var numerics: String
@@ -108,16 +113,19 @@ var spatialparent: Spatial = null
 
 
 func _enter_tree():
+	
+	
 	add_toolbuttons()
 	
 	control_dock = ControlDock.instance()
+	control_dock.editor = self
 	add_control_to_dock(EditorPlugin.DOCK_SLOT_RIGHT_BL, control_dock)
 
 	register_callbacks(true)
 
 
 func _exit_tree():
-	UI.save_config({ "settings" : { "z_up" : zy_swapped } })
+	UI.save_config({ "settings" : { "z_up" : settings.zy_swapped } })
 	register_callbacks(false)
 	
 	remove_control_from_docks(control_dock)
@@ -167,7 +175,7 @@ func register_callbacks(register: bool):
 
 
 func _on_toolbutton_z_up_toggled(toggled: bool):
-	zy_swapped = toggled
+	settings.zy_swapped = toggled
 
 
 func handles(object):
@@ -215,16 +223,25 @@ func is_snapping():
 	return snap_toggle
 
 
+func get_action_strength():
+	if !smoothing:
+		return 1.0
+	if state == GSRState.GRAB || state == GSRState.SCENE_PLACEMENT:
+		return 1.0 / settings.grab_snap_subd
+	else:
+		return 0.1
+	
+
 func grab_step_size():
-	return 1.0 * action_strength
+	return settings.grab_snap_size * get_action_strength()
 
 
 func rotate_step_size():
-	return 5.0 * action_strength
+	return 5.0 * get_action_strength()
 
 
 func scale_step_size():
-	return 0.1 * action_strength
+	return 0.1 * get_action_strength()
 
 
 func hide_gizmo():
@@ -269,11 +286,11 @@ var reference_mousepos := Vector2.ZERO
 
 
 func manipulation_mousepos() -> Vector2:
-	return (mousepos - reference_mousepos) * action_strength + mousepos_offset
+	return (mousepos - reference_mousepos) * get_action_strength() + mousepos_offset
 
 
 func save_manipulation_mousepos():
-	mousepos_offset += (mousepos - reference_mousepos) * action_strength
+	mousepos_offset += (mousepos - reference_mousepos) * get_action_strength()
 	reference_mousepos = mousepos
 	
 	
@@ -284,7 +301,7 @@ func forward_spatial_gui_input(camera, event):
 			
 		if selected && event.scancode == KEY_SHIFT:
 			save_manipulation_mousepos()
-			action_strength = 0.1 if event.pressed else 1.0
+			smoothing = event.pressed
 		elif selected && event.scancode == KEY_CONTROL:
 			snap_toggle = !snap_toggle
 			
@@ -319,13 +336,13 @@ func forward_spatial_gui_input(camera, event):
 				change_limit(camera, GSRLimit.X | (GSRLimit.REVERSE if event.shift else 0))
 				return true
 			elif char(event.unicode) == 'y' || char(event.unicode) == 'Y':
-				if !zy_swapped:
+				if !settings.zy_swapped:
 					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
 				else:
 					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
 				return true
 			elif char(event.unicode) == 'z' || char(event.unicode) == 'Z':
-				if !zy_swapped:
+				if !settings.zy_swapped:
 					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
 				else:
 					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
@@ -802,7 +819,7 @@ func apply_manipulation(camera: Camera):
 		var point := selection_center
 		var axis := Vector3.ZERO
 		
-		var change = Vector2(mousepos - selection_centerpos).angle_to(Vector2(saved_mousepos - selection_centerpos)) * action_strength
+		var change = Vector2(mousepos - selection_centerpos).angle_to(Vector2(saved_mousepos - selection_centerpos)) * get_action_strength()
 		rotate_angle += change
 		
 		if is_snapping():

@@ -20,57 +20,56 @@ extends PanelContainer
 
 
 const InputDialog = preload("./input_dialog.tscn")
+const NumberEdit = preload("./number_edit.gd")
+
+onready var snap_edit := $VBoxContainer/SnapEdit
+onready var subd_edit:= $VBoxContainer/SubdEdit
+onready var save_button := $VBoxContainer/HBoxContainer/SaveButton
+onready var preset_options := $VBoxContainer/HBoxContainer/PresetOptions
+onready var revert_button := $VBoxContainer/HBoxContainer/RevertButton
+onready var del_button := $VBoxContainer/HBoxContainer/DelButton
+
+var editor: EditorPlugin = null setget set_editor
 
 
-onready var snap_edit = $VBoxContainer/SnapEdit
-onready var subd_edit = $VBoxContainer/SubdEdit
-onready var save_button = $VBoxContainer/HBoxContainer/SaveButton
-onready var preset_options = $VBoxContainer/HBoxContainer/PresetOptions
-onready var del_button = $VBoxContainer/HBoxContainer/DelButton
-
-
-var sdlg = null
+var save_dlg = null
 
 
 func _ready():
 	del_button.icon = get_icon("Remove", "EditorIcons")
+	revert_button.icon = get_icon("Reload", "EditorIcons")
+	snap_edit.mode = NumberEdit.MODE_FLOAT
+	subd_edit.mode = NumberEdit.MODE_INT
+	snap_edit.empty_allowed = false
+	subd_edit.empty_allowed = false
+	snap_edit.connect("text_finalized", self, "_on_snap_finalized")
+	subd_edit.connect("text_finalized", self, "_on_snap_finalized")
 
-	snap_edit.connect("text_changed", self, "_on_numedit_changed", [snap_edit, false])
-	subd_edit.connect("text_changed", self, "_on_numedit_changed", [subd_edit, true])
-	
 	save_button.connect("pressed", self, "_on_save_pressed")
 	del_button.connect("pressed", self, "_on_del_preset_pressed")
+	revert_button.connect("pressed", self, "_on_revert_preset_pressed")
+	preset_options.connect("item_selected", self, "_on_preset_options_item_selected")
+
+	update_values()
+		
+	
+func set_editor(val):
+	if editor == null:
+		editor = val
+		update_values()
 
 
-func _on_numedit_changed(val: String, edit: LineEdit, int_only: bool):
-	var cpos = edit.caret_position
-	var cdif = 0
-	var changed = false
-	var dot = int_only
-	var newstr: String
-	
-	for ix in edit.text.length():
-		var ch = edit.text[ix]
-		if ch == '.':
-			if !dot:
-				dot = true
-			else:
-				if cpos > ix:
-					cdif += 1
-				changed = true
-				continue
-		elif ch < '0' || ch > '9':
-			if cpos > ix:
-				cdif += 1
-			changed = true
-			continue
-		newstr += ch
-	
-	if !changed:
+var inited := false
+func update_values():
+	if inited || editor == null || snap_edit == null:
 		return
-	
-	edit.text = newstr
-	edit.caret_position = cpos - cdif
+	inited = true
+	fill_preset_options()
+	var snap = str(editor.settings.grab_snap_size)
+	if !('.' in snap):
+		snap += ".0"
+	snap_edit.text = snap
+	subd_edit.text = str(editor.settings.grab_snap_subd)
 
 
 func _on_save_pressed():
@@ -78,13 +77,13 @@ func _on_save_pressed():
 
 
 func show_save_dialog():
-	sdlg = InputDialog.instance()
+	save_dlg = InputDialog.instance()
 	var top_parent: Control = find_top_parent()
-	top_parent.add_child(sdlg)
-	sdlg.connect("confirmed", self, "_on_save_dialog_confirmed")
-	sdlg.connect("hide", self, "_on_save_dialog_hidden")
-	sdlg.set_position((top_parent.get_rect().size / 2) - (sdlg.get_rect().size / 2))
-	sdlg.show_modal(true)
+	top_parent.add_child(save_dlg)
+	save_dlg.connect("confirmed", self, "_on_save_dialog_confirmed")
+	save_dlg.connect("hide", self, "_on_save_dialog_hidden")
+	save_dlg.set_position((top_parent.get_rect().size / 2) - (save_dlg.get_rect().size / 2))
+	save_dlg.show_modal(true)
 
 
 func find_top_parent():
@@ -98,25 +97,86 @@ func find_top_parent():
 
 
 func _on_save_dialog_confirmed():
-	if sdlg == null:
+	if save_dlg == null:
 		return
-	var text = sdlg.get_edit_text()
+	var text = save_dlg.get_edit_text()
 	save_preset(text)
 
 
 func _on_save_dialog_hidden():
-	print("Hidden")
 	call_deferred("_delete_save_dialog")
 
 
 func _delete_save_dialog():
-	sdlg.queue_free()
-	sdlg = null
+	save_dlg.queue_free()
+	save_dlg = null
 
+
+func _on_del_preset_pressed():
+	delete_preset(preset_options.selected)
+
+
+func _on_revert_preset_pressed():
+	var snap = str(editor.settings.snap_preset_snap(preset_options.selected))
+	if !('.' in snap):
+		snap += ".0"
+	snap_edit.text = snap
+	subd_edit.text = str(editor.settings.snap_preset_subdiv(preset_options.selected))
+	revert_button.disabled = true
+	
+
+func _on_snap_finalized():
+	editor.settings.set_snap_values(float(snap_edit.text), int(subd_edit.text))
+	del_button.disabled = (preset_options.selected == -1 ||
+			preset_options.selected >= editor.settings.snap_preset_count())
+	
+	update_revert_button()
+
+
+func update_revert_button():
+	revert_button.disabled = (preset_options.selected == -1 ||
+			preset_options.selected >= editor.settings.snap_preset_count() ||
+			(editor.settings.snap_preset_snap(preset_options.selected) == float(snap_edit.text) &&
+			editor.settings.snap_preset_subdiv(preset_options.selected) == int(subd_edit.text)))
+
+
+func _on_preset_options_item_selected(index: int):
+	if index == -1:
+		editor.settings.set_snap_values(float(snap_edit.text), int(subd_edit.text))
+		del_button.disabled = true
+		update_revert_button()
+		return
+	var snap = str(editor.settings.snap_preset_snap(index))
+	if !('.' in snap):
+		snap += ".0"
+	snap_edit.text = snap
+	subd_edit.text = str(editor.settings.snap_preset_subdiv(index))
+	editor.settings.select_snap_preset(index)
+	del_button.disabled = false
+	update_revert_button()
+	
 
 func save_preset(text: String):
-	pass
+	var oldpos = preset_options.selected
+	var pos = editor.settings.store_snap_preset(text, float(snap_edit.text), int(subd_edit.text))
+	fill_preset_options()
+	preset_options.selected = pos
+	
+	del_button.disabled = editor.settings.snap_preset_count() == 0
+	update_revert_button()
 
 
 func delete_preset(index: int):
-	pass
+	editor.settings.delete_snap_preset(index)
+	fill_preset_options()
+	
+	del_button.disabled = editor.settings.snap_preset_count() == 0
+	update_revert_button()
+
+
+
+func fill_preset_options():
+	preset_options.clear()
+	for ix in editor.settings.snap_preset_count():
+		preset_options.add_item(editor.settings.snap_preset_name(ix))
+	preset_options.disabled = preset_options.get_item_count() == 0
