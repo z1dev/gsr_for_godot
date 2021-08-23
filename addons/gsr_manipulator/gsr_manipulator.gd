@@ -19,9 +19,10 @@ tool
 extends EditorPlugin
 
 const UI = preload("./editor_ui.gd")
+const ControlDock = preload("./ui/control_dock.tscn")
 
 # Current manipulation of objects
-enum GSRState { NONE, GRAB, ROTATE, SCALE }
+enum GSRState { NONE, GRAB, ROTATE, SCALE, SCENE_PLACEMENT }
 # Axis of manipulation
 enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
 # Objects manipulated by this plugin are selected
@@ -96,19 +97,35 @@ var saved_gizmo_size
 # Button added to toolbar to make the z key toggle the vertical axis like in Blender.
 var toolbutton_z_up: ToolButton
 
+# Dock added to the UI with plugin settings.
+var control_dock = null
+
+# Scene being placed on the scene as a "tile"
+var spatialscene: Spatial = null
+# Parent node the "tiles" will be placed on in scene placement mode. Either the
+# root Spatial node if nothing is selected, or the selected spatial node.
+var spatialparent: Spatial = null
+
 
 func _enter_tree():
 	add_toolbuttons()
+	
+	control_dock = ControlDock.instance()
+	add_control_to_dock(EditorPlugin.DOCK_SLOT_RIGHT_BL, control_dock)
+
 	register_callbacks(true)
 
 
 func _exit_tree():
 	UI.save_config({ "settings" : { "z_up" : zy_swapped } })
 	register_callbacks(false)
+	
+	remove_control_from_docks(control_dock)
 	remove_toolbuttons()
 	# Make sure we don't hold a reference of anything
 	reset()
 	selected_objects = weakref(null)
+	control_dock.queue_free()
 
 
 func add_toolbuttons():
@@ -165,7 +182,8 @@ func handles(object):
 		if object is Spatial:
 			selected_objects = weakref(object)
 			return true
-	return false
+
+	return object == null
 
 
 func make_visible(visible):
@@ -175,7 +193,7 @@ func make_visible(visible):
 	selected = visible
 	if !visible:
 		show_gizmo()
-	cancel_manipulation()
+	cancel_all()
 
 
 # Whether the button to use local space by default is pressed. After I figured it
@@ -249,6 +267,7 @@ func draw_line_dotted(control: CanvasItem, from: Vector2, to: Vector2, dot_len: 
 var mousepos_offset := Vector2.ZERO
 var reference_mousepos := Vector2.ZERO
 
+
 func manipulation_mousepos() -> Vector2:
 	return (mousepos - reference_mousepos) * action_strength + mousepos_offset
 
@@ -259,86 +278,94 @@ func save_manipulation_mousepos():
 	
 	
 func forward_spatial_gui_input(camera, event):
-	if !selected:
-		if event is InputEventMouseMotion:
-			mousepos = current_camera_position(event, camera)
-			saved_mousepos = mousepos
-		return false
-		
-	var handled = false
 	if event is InputEventKey:
 		if event.echo:
 			return false
 			
-		if event.scancode == KEY_SHIFT:
+		if selected && event.scancode == KEY_SHIFT:
 			save_manipulation_mousepos()
 			action_strength = 0.1 if event.pressed else 1.0
-		elif event.scancode == KEY_CONTROL:
+		elif selected && event.scancode == KEY_CONTROL:
 			snap_toggle = !snap_toggle
 			
 		if !event.pressed:
 			return false
 		
-		if char(event.unicode) == 'g':
+		if selected && char(event.unicode) == 'g':
 			start_manipulation(camera, GSRState.GRAB)
 			saved_mousepos = mousepos
-			handled = true
-		elif char(event.unicode) == 'r':
+			return true
+		elif selected && char(event.unicode) == 'r':
 			start_manipulation(camera, GSRState.ROTATE)
 			saved_mousepos = mousepos
-			handled = true
-		elif char(event.unicode) == 's':
+			return true
+		elif selected && char(event.unicode) == 's':
 			start_manipulation(camera, GSRState.SCALE)
 			saved_mousepos = mousepos
-			handled = true
+			return true
+		elif char(event.unicode) == 'a':
+			start_scene_placement(camera)
+			saved_mousepos = mousepos
+			return true
 		elif event.scancode == KEY_ESCAPE:
-			cancel_manipulation()
-			handled = true
-		elif state != GSRState.NONE:
+			cancel_all()
+			return true
+		elif state != GSRState.NONE && state != GSRState.SCENE_PLACEMENT:
 			var newlimit = 0
 			if event.scancode == KEY_ENTER || event.scancode == KEY_KP_ENTER:
 				finalize_manipulation()
-				handled = true
+				return true
 			elif char(event.unicode) == 'x' || char(event.unicode) == 'X':
 				change_limit(camera, GSRLimit.X | (GSRLimit.REVERSE if event.shift else 0))
-				handled = true
+				return true
 			elif char(event.unicode) == 'y' || char(event.unicode) == 'Y':
 				if !zy_swapped:
 					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
 				else:
 					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
-				handled = true
+				return true
 			elif char(event.unicode) == 'z' || char(event.unicode) == 'Z':
 				if !zy_swapped:
 					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
 				else:
 					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
-				handled = true
+				return true
 			elif (char(event.unicode) >= '0' && char(event.unicode) <= '9' ||
 					char(event.unicode) == '.' || char(event.unicode) == '-'):
 				numeric_input(camera, char(event.unicode))
-				handled = true
+				return true
 			elif event.scancode == KEY_BACKSPACE:
 				numeric_delete(camera)
-				handled = true
+				return true
 	
 	elif event is InputEventMouseButton:
-		if state != GSRState.NONE && event.button_index == BUTTON_RIGHT:
-			cancel_manipulation()
-			handled = true
-		elif state != GSRState.NONE && event.button_index == BUTTON_LEFT:
-			finalize_manipulation()
-			handled = true
+		if state != GSRState.NONE:
+			if event.button_index == BUTTON_RIGHT:
+				cancel_all()
+				return true
+			if event.button_index == BUTTON_LEFT && state != GSRState.SCENE_PLACEMENT:
+				finalize_manipulation()
+				return true
 	
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
+		if state == GSRState.NONE:
+			saved_mousepos = mousepos
+			return false
+		
+		if state == GSRState.SCENE_PLACEMENT:
+			update_scene_placement(camera)
+			saved_mousepos = mousepos
+			return false
+			
 		if state != GSRState.NONE:
 			if numerics.empty():
 				manipulate_selection(camera)
-			handled = true
+				
 		saved_mousepos = mousepos
+		return state != GSRState.NONE
 			
-	return handled
+	return false
 
 
 # Returns the screen position of event relative to editor_camera instead of the
@@ -354,12 +381,12 @@ func forward_spatial_draw_over_viewport(overlay):
 	# Hack to check if this overlay is the one we use right now:
 	if overlay.get_parent().get_child(0).get_child(0).get_child(0) != editor_camera:
 		return
+		
+	if state == GSRState.NONE || state == GSRState.SCENE_PLACEMENT:
+		return
 	
 	var f = overlay.get_font("font")
 	var text: String
-	
-	if state == GSRState.NONE:
-		return
 	
 	if state == GSRState.GRAB:
 		text = "[Grab]"
@@ -529,10 +556,55 @@ func inside_viewrect(viewsize: Vector2, pt: Vector2):
 	return pt.x >= -0.001 && pt.y >= -0.001 && pt.x <= viewsize.x + 0.001 && pt.y <= viewsize.y + 0.001
 
 
-func start_manipulation(camera: Camera, newstate):
+func start_scene_placement(camera: Camera):
+	cancel_all()
 	
+	# Get the selected scene in the file system that can be instanced.
+	var path: String = UI.fs_selected_path(self)
+	if path.empty():
+		return
+	
+	var ei = get_editor_interface()
+	var fs = ei.get_resource_filesystem()
+	
+	if fs.get_file_type(path) != "PackedScene":
+		return
+	var ps: PackedScene = load(path)
+	if !ps.can_instance():
+		return
+	var sstate = ps.get_state()
+	if sstate.get_node_count() < 1:
+		return
+	if !ClassDB.class_exists(sstate.get_node_type(0)) && ClassDB.is_parent_class(sstate.get_node_type(0), "Spatial"):
+		return
+
+	var es = ei.get_selection()
+	var objects = es.get_transformable_selected_nodes()
+	if objects == null || objects.empty():
+		var root = ei.get_edited_scene_root()
+		if !(root is Spatial):
+			return
+		spatialparent = root
+	elif objects.size() > 1:
+		# Multiple nodes selected. Only one is acceptable for scene placement.
+		return
+	else:
+		if !(objects[0] is Spatial):
+			return
+		spatialparent = objects[0];
+
+	state = GSRState.SCENE_PLACEMENT
+	start_mousepos = mousepos
+	
+	spatialscene = ps.instance()
+	spatialparent.add_child(spatialscene)
+	
+	update_scene_placement(camera)
+	
+	
+func start_manipulation(camera: Camera, newstate):
 	if state != GSRState.NONE:
-		cancel_manipulation()
+		cancel_all()
 	
 	state = newstate
 	start_mousepos = mousepos
@@ -618,8 +690,23 @@ func numeric_delete(camera: Camera):
 	apply_manipulation(camera)
 
 
+func update_scene_placement(camera: Camera):
+	if spatialscene == null:
+		return
+		
+	var plane = Plane(spatialparent.global_transform.basis.y, 0)
+	var point = plane.intersects_ray(camera.project_ray_origin(mousepos), camera.project_ray_normal(mousepos))
+	if point == null:
+		return
+		
+	point = spatialparent.to_local(point)
+	point = Vector3(stepify(point.x, 1.0), stepify(point.y, 1.0), stepify(point.z, 1.0))
+	
+	spatialscene.transform.origin = point
+	
+
 func manipulate_selection(camera):
-	if state == GSRState.NONE:
+	if state == GSRState.NONE || state == GSRState.SCENE_PLACEMENT:
 		return
 	
 	revert_manipulation()
@@ -636,8 +723,14 @@ func revert_manipulation():
 		selection[ix].transform = start_transform[ix]
 
 
+func reset_scene_action():
+	if spatialscene != null:
+		spatialscene.queue_free()
+		spatialscene = null
+
+
 func apply_manipulation(camera: Camera):
-	if selection.empty():
+	if state == GSRState.SCENE_PLACEMENT || selection.empty():
 		return
 	
 	camera = editor_camera
@@ -874,7 +967,8 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 	return [v1.normalized(), v2.normalized()]
 	
 
-func cancel_manipulation():
+func cancel_all():
+	reset_scene_action()
 	revert_manipulation()
 	reset()
 
@@ -908,6 +1002,9 @@ func reset():
 	start_global_transform = []
 	rotate_angle = 0.0
 	numerics = ""
+	
+	spatialscene = null
+	spatialparent = null
 	
 	show_gizmo()
 	update_overlays()

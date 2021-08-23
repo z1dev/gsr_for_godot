@@ -18,12 +18,13 @@
 tool
 extends Object
 
+
 func _ready():
 	pass
 
 
 # Returns a child node of the control node if it matches the class name `childclass`.
-# It can return a specific child node with an `index`, of all child nodes with the
+# It can return a specific child node with an `index` of all child nodes with the
 # same class name.
 static func find_child(control: Node, childclass: String, index: int = 0):
 	if control == null:
@@ -35,6 +36,15 @@ static func find_child(control: Node, childclass: String, index: int = 0):
 				return c
 			index -= 1
 	return null
+
+
+static func fs_selected_path(editor: EditorPlugin):
+	var ei = editor.get_editor_interface()
+	return ei.get_current_path()
+#	var fsdock: FileSystemDock = ei.get_file_system_dock()
+#	var split = (find_child(fsdock, "Button", 1) as Button).pressed
+#	var tree := find_child(fsdock, "Tree", 0) as Tree
+#	var sel := tree.get_next_selected(null)
 
 
 static func spatial_editor(editor: EditorPlugin):
@@ -97,7 +107,6 @@ static func get_config_property(section: String, name: String, default):
 	
 	
 static func save_config(data):
-	print("Saving config")
 	var config = ConfigFile.new()
 	# We don't care if it didn't load, just want to make sure that we get all
 	# the keys if it does load.
@@ -108,8 +117,6 @@ static func save_config(data):
 		for key2 in data[key].keys():
 			if typeof(key2) != TYPE_STRING:
 				continue
-			print("Save value: ")
 			config.set_value(key, key2, data[key][key2])
 	config.save("user://gsr.cfg")
-	print("Config saved")
 
