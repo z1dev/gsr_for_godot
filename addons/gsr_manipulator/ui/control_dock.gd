@@ -76,6 +76,7 @@ func update_values():
 		return
 	inited = true
 	fill_preset_options()
+	preset_options.selected = editor.settings.selected_snap_preset
 	var snap = str(editor.settings.grab_snap_size_x)
 	if !('.' in snap):
 		snap += ".0"
@@ -101,6 +102,8 @@ func show_save_dialog():
 	save_dlg.connect("confirmed", self, "_on_save_dialog_confirmed")
 	save_dlg.connect("hide", self, "_on_save_dialog_hidden")
 	save_dlg.set_position((top_parent.get_rect().size / 2) - (save_dlg.get_rect().size / 2))
+	if preset_options.selected > -1:
+		save_dlg.set_edit_text(preset_options.get_item_text(preset_options.selected))
 	save_dlg.show_modal(true)
 
 
@@ -154,14 +157,13 @@ func _on_revert_preset_pressed():
 func _on_snap_y_box_pressed():
 	snap_edit_y.editable = snap_y_box.pressed
 	subd_edit_y.editable = snap_y_box.pressed
-	update_revert_button()
+	_on_snap_finalized()
 	
 
 func _on_snap_finalized():
 	editor.settings.set_snap_values(float(snap_edit_x.text), int(subd_edit_x.text), snap_y_box.pressed, float(snap_edit_y.text), int(subd_edit_y.text))
 	del_button.disabled = (preset_options.selected == -1 ||
 			preset_options.selected >= editor.settings.snap_preset_count())
-	
 	update_revert_button()
 
 
@@ -179,8 +181,8 @@ func _on_preset_options_item_selected(index: int):
 	if index == -1:
 		editor.settings.set_snap_values(float(snap_edit_x.text), int(subd_edit_x.text), snap_y_box.pressed, float(snap_edit_y.text), int(subd_edit_y.text))
 		del_button.disabled = true
-		update_revert_button()
 		_on_snap_y_box_pressed()
+		editor.settings.selected_snap_preset = index
 		return
 	var snap = str(editor.settings.snap_preset_snap(index, false))
 	if !('.' in snap):
@@ -195,8 +197,8 @@ func _on_preset_options_item_selected(index: int):
 	snap_y_box.pressed = editor.settings.snap_preset_use_y(index)
 	editor.settings.select_snap_preset(index)
 	del_button.disabled = false
-	update_revert_button()
 	_on_snap_y_box_pressed()
+	editor.settings.selected_snap_preset = index
 
 
 func save_preset(text: String):
@@ -207,6 +209,7 @@ func save_preset(text: String):
 	
 	del_button.disabled = editor.settings.snap_preset_count() == 0
 	update_revert_button()
+	editor.settings.selected_snap_preset = preset_options.selected
 
 
 func delete_preset(index: int):
@@ -214,7 +217,8 @@ func delete_preset(index: int):
 	fill_preset_options()
 	
 	del_button.disabled = editor.settings.snap_preset_count() == 0
-	update_revert_button()
+	_on_snap_finalized()
+	editor.settings.selected_snap_preset = preset_options.selected
 
 
 func fill_preset_options():

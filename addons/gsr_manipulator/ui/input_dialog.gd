@@ -15,6 +15,12 @@ func get_edit_text():
 	return edit.text
 
 
+func set_edit_text(text: String):
+	edit.text = text
+	edit.select_all()
+	_on_edit_text_changed(text)
+
+
 func _on_edit_text_changed(newtext: String):
 	get_ok().disabled = !allow_empty && newtext.empty()
 

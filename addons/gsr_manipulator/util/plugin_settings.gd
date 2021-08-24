@@ -41,6 +41,8 @@ var snap_controls_shown = false
 
 # Presets (stored in dictionaries) created for snap and subdivision values.
 var snap_presets = []
+# Preset last selected in the settings panel
+var selected_snap_preset = -1
 
 func load_config():
 	var config := UI.load_config("user://gsr.cfg")
@@ -48,6 +50,8 @@ func load_config():
 	var section = config.get("settings")
 	if section != null:
 		zy_swapped = section.get("z_up", false)
+		snap_controls_shown = section.get("snap_controls_shown", false)
+		selected_snap_preset = section.get("snap_preset", false)
 		
 	section = config.get("snap")
 	if section != null:
@@ -84,9 +88,10 @@ func load_config():
 	
 
 func save_config():
-	var config = { "settings" : { "z_up" : zy_swapped },
-		"snap" : { "snap_x" : grab_snap_size_x, "subd_x" : grab_snap_subd_x,
-		"use_y" : use_y_grab_snap, "snap_y" : grab_snap_size_y, "subd_y" : grab_snap_subd_y } }
+	var config = { "settings" : { "z_up" : zy_swapped, "snap_preset" : selected_snap_preset,
+					"snap_controls_shown" : snap_controls_shown },
+			"snap" : { "snap_x" : grab_snap_size_x, "subd_x" : grab_snap_subd_x,
+			"use_y" : use_y_grab_snap, "snap_y" : grab_snap_size_y, "subd_y" : grab_snap_subd_y } }
 	
 	var presets = {}
 	for ix in snap_presets.size():

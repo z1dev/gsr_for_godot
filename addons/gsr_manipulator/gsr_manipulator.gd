@@ -157,6 +157,7 @@ func add_toolbuttons():
 		
 		popup.add_check_item("Snap options")
 		popup.set_item_tooltip(1, "Show snapping options in 3D editor")
+		popup.set_item_checked(1, settings.snap_controls_shown)
 
 
 		UI.spatial_toolbar(self).add_child(menu_button)
