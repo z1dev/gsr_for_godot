@@ -151,11 +151,11 @@ func add_toolbuttons():
 		menu_button.text = "GSR"
 		var popup = menu_button.get_popup()
 		popup.add_check_item("Z for up")
-		popup.set_item_tooltip(0, "Swap z and y axis lock shortcuts")
+		popup.set_item_tooltip(0, "Swap z and y axis-lock shortcuts")
 		popup.set_item_checked(0, UI.get_config_property("settings", "z_up", false))
 		
 		popup.add_check_item("Snap options")
-		popup.set_item_tooltip(1, "Show snapping options in 3D editor corner")
+		popup.set_item_tooltip(1, "Show snapping options in 3D editor")
 
 
 		UI.spatial_toolbar(self).add_child(menu_button)
@@ -286,27 +286,20 @@ func is_snapping():
 	return snap_toggle
 
 
-func get_grab_action_strength(axis):
-	if !smoothing:
-		return 1.0
-	if state == GSRState.GRAB || state == GSRState.SCENE_PLACEMENT:
-		if axis == GSRAxis.XZ:
-			return 1.0 / settings.grab_snap_subd_x
-		if axis == GSRAxis.Y:
-			return 1.0 / settings.grab_snap_subd_y
-	
+#func get_grab_action_strength():
+#	if !smoothing:
+#		return 1.0
+#	return 1.0 / settings.grab_snap_subd_x
+
+
 func get_action_strength():
 	if !smoothing:
 		return 1.0
-	else:
-		return 0.1
+	return 0.1
 	
 
-func grab_step_size(axis):
-	if axis == GSRAxis.XZ:
-		return settings.grab_snap_size_x * get_grab_action_strength(axis)
-	if axis == GSRAxis.Y:
-		return settings.grab_snap_size_y * get_grab_action_strength(axis)
+func grab_step_size():
+	return settings.grab_snap_size_x * get_action_strength()
 
 
 func rotate_step_size():
@@ -316,6 +309,16 @@ func rotate_step_size():
 func scale_step_size():
 	return 0.1 * get_action_strength()
 
+
+func tile_step_size(axis: int):
+	if !smoothing:
+		if axis == GSRAxis.XZ:
+			return settings.grab_snap_size_x
+		return settings.grab_snap_size_y
+	if axis == GSRAxis.XZ || !settings.use_y_grab_snap:
+		return settings.grab_snap_size_x * (1.0 / settings.grab_snap_subd_x)
+	return settings.grab_snap_size_y * (1.0 / settings.grab_snap_subd_y)
+	
 
 func hide_gizmo():
 	if gizmohidden:
@@ -790,7 +793,7 @@ func update_scene_placement(camera: Camera):
 		return
 		
 	point = spatialparent.to_local(point)
-	point = Vector3(stepify(point.x, grab_step_size(GSRAxis.XZ)), stepify(point.y, grab_step_size(GSRAxis.Y)), stepify(point.z, grab_step_size(GSRAxis.XZ)))
+	point = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ)), stepify(point.y, tile_step_size(GSRAxis.Y)), stepify(point.z, tile_step_size(GSRAxis.XZ)))
 	
 	spatialscene.transform.origin = point
 	
@@ -873,19 +876,19 @@ func apply_manipulation(camera: Camera):
 						
 			if is_snapping():
 				if limit == GSRLimit.NONE:
-					offset = Vector3(stepify(offset.x, grab_step_size(GSRAxis.XZ)),
-							stepify(offset.y, grab_step_size(GSRAxis.Y)),
-							stepify(offset.z, grab_step_size(GSRAxis.XZ)))
+					offset = Vector3(stepify(offset.x, grab_step_size()),
+							stepify(offset.y, grab_step_size()),
+							stepify(offset.z, grab_step_size()))
 							
 				elif (limit & GSRLimit.X) || (limit & GSRLimit.Y) || (limit & GSRLimit.Z):
 					if (limit & GSRLimit.REVERSE):
 						var vec = get_limit_axis_reverse_vectors(ix)
-						var vec1 = offset.project(vec[0][0])
-						var vec2 = offset.project(vec[0][1])
+						var vec1 = offset.project(vec[0])
+						var vec2 = offset.project(vec[1])
 						
-						offset = vec1.normalized() * stepify(vec1.length(), grab_step_size(vec[1][0])) + vec2.normalized() * stepify(vec2.length(), grab_step_size(vec[1][1]))
+						offset = vec1.normalized() * stepify(vec1.length(), grab_step_size()) + vec2.normalized() * stepify(vec2.length(), grab_step_size())
 					else:
-						offset = offset.normalized() * stepify(offset.length(), grab_step_size(GSRAxis.Y if (limit & GSRLimit.Y) else GSRAxis.XZ ))
+						offset = offset.normalized() * stepify(offset.length(), grab_step_size())
 						
 			offset_object(ix, offset)
 	elif state == GSRState.ROTATE:
@@ -1034,8 +1037,6 @@ func get_limit_axis_reverse_plane(index: int) -> Plane:
 func get_limit_axis_reverse_vectors(index: int) -> Array:
 	var v1: Vector3
 	var v2: Vector3
-	var a1: int
-	var a2: int
 	if (limit & GSRLimit.X):
 		if !local || selection.size() <= index:
 			v1 = Vector3(0.0, 1.0, 0.0)
@@ -1043,8 +1044,6 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 		else:
 			v1 = selection[index].global_transform.basis.y #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.z #- selection[index].global_transform.origin
-		a1 = GSRAxis.Y
-		a2 = GSRAxis.XZ
 	elif (limit & GSRLimit.Y):
 		if !local || selection.size() <= index:
 			v1 = Vector3(1.0, 0.0, 0.0)
@@ -1052,8 +1051,6 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 		else:
 			v1 = selection[index].global_transform.basis.x #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.z #- selection[index].global_transform.origin
-		a1 = GSRAxis.XZ
-		a2 = GSRAxis.XZ
 	elif (limit & GSRLimit.Z):
 		if !local || selection.size() <= index:
 			v1 = Vector3(1.0, 0.0, 0.0)
@@ -1061,9 +1058,7 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 		else:
 			v1 = selection[index].global_transform.basis.x #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.y #- selection[index].global_transform.origin
-		a1 = GSRAxis.XZ
-		a2 = GSRAxis.Y
-	return [[v1.normalized(), v2.normalized()], [a1, a2]]
+	return [v1.normalized(), v2.normalized()]
 	
 
 func cancel_all():
