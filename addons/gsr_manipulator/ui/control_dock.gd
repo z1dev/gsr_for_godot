@@ -22,12 +22,16 @@ extends PanelContainer
 const InputDialog = preload("./input_dialog.tscn")
 const NumberEdit = preload("./number_edit.gd")
 
-onready var snap_edit := $VBoxContainer/SnapEdit
-onready var subd_edit:= $VBoxContainer/SubdEdit
-onready var save_button := $VBoxContainer/HBoxContainer/SaveButton
-onready var preset_options := $VBoxContainer/HBoxContainer/PresetOptions
-onready var revert_button := $VBoxContainer/HBoxContainer/RevertButton
-onready var del_button := $VBoxContainer/HBoxContainer/DelButton
+onready var snap_edit_x := $HBoxSettings/GridContainer/SnapEditX
+onready var subd_edit_x := $HBoxSettings/GridContainer/SubdEditX
+onready var snap_edit_y := $HBoxSettings/GridContainer/SnapEditY
+onready var subd_edit_y := $HBoxSettings/GridContainer/SubdEditY
+onready var save_button := $HBoxSettings/HBoxPreset/SaveButton
+onready var preset_options := $HBoxSettings/HBoxPreset/PresetOptions
+onready var revert_button := $HBoxSettings/HBoxPreset/RevertButton
+onready var del_button := $HBoxSettings/HBoxPreset/DelButton
+onready var snap_y_box := $HBoxSettings/GridContainer/SnapYBox
+
 
 var editor: EditorPlugin = null setget set_editor
 
@@ -38,21 +42,28 @@ var save_dlg = null
 func _ready():
 	del_button.icon = get_icon("Remove", "EditorIcons")
 	revert_button.icon = get_icon("Reload", "EditorIcons")
-	snap_edit.mode = NumberEdit.MODE_FLOAT
-	subd_edit.mode = NumberEdit.MODE_INT
-	snap_edit.empty_allowed = false
-	subd_edit.empty_allowed = false
-	snap_edit.connect("text_finalized", self, "_on_snap_finalized")
-	subd_edit.connect("text_finalized", self, "_on_snap_finalized")
+	snap_edit_x.mode = NumberEdit.MODE_FLOAT
+	snap_edit_y.mode = NumberEdit.MODE_FLOAT
+	subd_edit_x.mode = NumberEdit.MODE_INT
+	subd_edit_y.mode = NumberEdit.MODE_INT
+	snap_edit_x.empty_allowed = false
+	snap_edit_y.empty_allowed = false
+	subd_edit_x.empty_allowed = false
+	subd_edit_y.empty_allowed = false
+	snap_edit_x.connect("text_finalized", self, "_on_snap_finalized")
+	snap_edit_y.connect("text_finalized", self, "_on_snap_finalized")
+	subd_edit_x.connect("text_finalized", self, "_on_snap_finalized")
+	subd_edit_y.connect("text_finalized", self, "_on_snap_finalized")
 
 	save_button.connect("pressed", self, "_on_save_pressed")
 	del_button.connect("pressed", self, "_on_del_preset_pressed")
 	revert_button.connect("pressed", self, "_on_revert_preset_pressed")
+	snap_y_box.connect("pressed", self, "_on_snap_y_box_pressed")
 	preset_options.connect("item_selected", self, "_on_preset_options_item_selected")
 
 	update_values()
 		
-	
+
 func set_editor(val):
 	if editor == null:
 		editor = val
@@ -61,15 +72,22 @@ func set_editor(val):
 
 var inited := false
 func update_values():
-	if inited || editor == null || snap_edit == null:
+	if inited || editor == null || snap_edit_x == null:
 		return
 	inited = true
 	fill_preset_options()
-	var snap = str(editor.settings.grab_snap_size)
+	var snap = str(editor.settings.grab_snap_size_x)
 	if !('.' in snap):
 		snap += ".0"
-	snap_edit.text = snap
-	subd_edit.text = str(editor.settings.grab_snap_subd)
+	snap_edit_x.text = snap
+	subd_edit_x.text = str(editor.settings.grab_snap_subd_x)
+	snap = str(editor.settings.grab_snap_size_y)
+	if !('.' in snap):
+		snap += ".0"
+	snap_edit_y.text = snap
+	subd_edit_y.text = str(editor.settings.grab_snap_subd_y)
+	snap_y_box.pressed = editor.settings.use_y_grab_snap
+	_on_snap_y_box_pressed()
 
 
 func _on_save_pressed():
@@ -117,16 +135,29 @@ func _on_del_preset_pressed():
 
 
 func _on_revert_preset_pressed():
-	var snap = str(editor.settings.snap_preset_snap(preset_options.selected))
+	var snap = str(editor.settings.snap_preset_snap(preset_options.selected, false))
 	if !('.' in snap):
 		snap += ".0"
-	snap_edit.text = snap
-	subd_edit.text = str(editor.settings.snap_preset_subdiv(preset_options.selected))
+	snap_edit_x.text = snap
+	subd_edit_x.text = str(editor.settings.snap_preset_subdiv(preset_options.selected, false))
+	snap = str(editor.settings.snap_preset_snap(preset_options.selected, true))
+	if !('.' in snap):
+		snap += ".0"
+	snap_edit_y.text = snap
+	subd_edit_y.text = str(editor.settings.snap_preset_subdiv(preset_options.selected, true))
+	snap_y_box.pressed = editor.settings.snap_preset_use_y(preset_options.selected)
+	_on_snap_y_box_pressed()
 	revert_button.disabled = true
+	_on_snap_finalized()
+
+
+func _on_snap_y_box_pressed():
+	snap_edit_y.editable = snap_y_box.pressed
+	subd_edit_y.editable = snap_y_box.pressed
 	
 
 func _on_snap_finalized():
-	editor.settings.set_snap_values(float(snap_edit.text), int(subd_edit.text))
+	editor.settings.set_snap_values(float(snap_edit_x.text), int(subd_edit_x.text), snap_y_box.pressed, float(snap_edit_y.text), int(subd_edit_y.text))
 	del_button.disabled = (preset_options.selected == -1 ||
 			preset_options.selected >= editor.settings.snap_preset_count())
 	
@@ -136,29 +167,38 @@ func _on_snap_finalized():
 func update_revert_button():
 	revert_button.disabled = (preset_options.selected == -1 ||
 			preset_options.selected >= editor.settings.snap_preset_count() ||
-			(editor.settings.snap_preset_snap(preset_options.selected) == float(snap_edit.text) &&
-			editor.settings.snap_preset_subdiv(preset_options.selected) == int(subd_edit.text)))
+			(editor.settings.snap_preset_snap(preset_options.selected, false) == float(snap_edit_x.text) &&
+			editor.settings.snap_preset_subdiv(preset_options.selected, false) == int(subd_edit_x.text) &&
+			editor.settings.snap_preset_use_y(preset_options.selected) == snap_y_box.pressed &&
+			editor.settings.snap_preset_snap(preset_options.selected, true) == float(snap_edit_y.text) &&
+			editor.settings.snap_preset_subdiv(preset_options.selected, true) == int(subd_edit_y.text)))
 
 
 func _on_preset_options_item_selected(index: int):
 	if index == -1:
-		editor.settings.set_snap_values(float(snap_edit.text), int(subd_edit.text))
+		editor.settings.set_snap_values(float(snap_edit_x.text), int(subd_edit_x.text), snap_y_box.pressed, float(snap_edit_y.text), int(subd_edit_y.text))
 		del_button.disabled = true
 		update_revert_button()
 		return
-	var snap = str(editor.settings.snap_preset_snap(index))
+	var snap = str(editor.settings.snap_preset_snap(index, false))
 	if !('.' in snap):
 		snap += ".0"
-	snap_edit.text = snap
-	subd_edit.text = str(editor.settings.snap_preset_subdiv(index))
+	snap_edit_x.text = snap
+	subd_edit_x.text = str(editor.settings.snap_preset_subdiv(index, false))
+	snap = str(editor.settings.snap_preset_snap(index, true))
+	if !('.' in snap):
+		snap += ".0"
+	snap_edit_y.text = snap
+	subd_edit_y.text = str(editor.settings.snap_preset_subdiv(index, true))
+	snap_y_box.pressed = editor.settings.snap_preset_use_y(index)
 	editor.settings.select_snap_preset(index)
 	del_button.disabled = false
 	update_revert_button()
-	
+
 
 func save_preset(text: String):
 	var oldpos = preset_options.selected
-	var pos = editor.settings.store_snap_preset(text, float(snap_edit.text), int(subd_edit.text))
+	var pos = editor.settings.store_snap_preset(text, float(snap_edit_x.text), int(subd_edit_x.text), snap_y_box.pressed, float(snap_edit_y.text), int(subd_edit_y.text))
 	fill_preset_options()
 	preset_options.selected = pos
 	
@@ -172,7 +212,6 @@ func delete_preset(index: int):
 	
 	del_button.disabled = editor.settings.snap_preset_count() == 0
 	update_revert_button()
-
 
 
 func fill_preset_options():

@@ -30,6 +30,8 @@ var settings: PluginSettings = PluginSettings.new()
 enum GSRState { NONE, GRAB, ROTATE, SCALE, SCENE_PLACEMENT }
 # Axis of manipulation
 enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
+# Axis for reading snapping values.
+enum GSRAxis { XZ = 0, Y = 1 }
 
 # Objects manipulated by this plugin are selected
 var selected := false
@@ -99,11 +101,13 @@ var gizmohidden = false
 var saved_gizmo_size
 
 
-# Button added to toolbar to make the z key toggle the vertical axis like in Blender.
-var toolbutton_z_up: ToolButton
+# Button added to toolbar for settings like the z key toggle.
+var menu_button: MenuButton
+#var toolbutton_z_up: ToolButton
 
 # Dock added to the UI with plugin settings.
 var control_dock = null
+
 
 # Scene being placed on the scene as a "tile"
 var spatialscene: Spatial = null
@@ -113,14 +117,9 @@ var spatialparent: Spatial = null
 
 
 func _enter_tree():
-	
-	
 	add_toolbuttons()
+	add_control_dock()
 	
-	control_dock = ControlDock.instance()
-	control_dock.editor = self
-	add_control_to_dock(EditorPlugin.DOCK_SLOT_RIGHT_BL, control_dock)
-
 	register_callbacks(true)
 
 
@@ -128,54 +127,118 @@ func _exit_tree():
 	UI.save_config({ "settings" : { "z_up" : settings.zy_swapped } })
 	register_callbacks(false)
 	
-	remove_control_from_docks(control_dock)
 	remove_toolbuttons()
 	# Make sure we don't hold a reference of anything
 	reset()
 	selected_objects = weakref(null)
-	control_dock.queue_free()
+	remove_control_dock()
 
+
+func add_control_dock():
+	control_dock = ControlDock.instance()
+	control_dock.editor = self
+	get_editor_interface().get_editor_viewport().add_child(control_dock)
+	update_control_dock()
+	
+	
+func remove_control_dock():
+	control_dock.queue_free()
+	
 
 func add_toolbuttons():
-	if toolbutton_z_up == null:
-		toolbutton_z_up = ToolButton.new()
-		toolbutton_z_up.toggle_mode = true
-		toolbutton_z_up.hint_tooltip = "Swap z and y axis lock shortcuts"
-		toolbutton_z_up.connect("toggled", self, "_on_toolbutton_z_up_toggled")
-		if UI.is_dark_theme(self):
-			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
-		else:
-			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
+	if menu_button == null:
+		menu_button = MenuButton.new()
+		menu_button.text = "GSR"
+		var popup = menu_button.get_popup()
+		popup.add_check_item("Z for up")
+		popup.set_item_tooltip(0, "Swap z and y axis lock shortcuts")
+		popup.set_item_checked(0, UI.get_config_property("settings", "z_up", false))
+		
+		popup.add_check_item("Snap options")
+		popup.set_item_tooltip(1, "Show snapping options in 3D editor corner")
 
-		toolbutton_z_up.pressed = UI.get_config_property("settings", "z_up", false)
-		UI.spatial_toolbar(self).add_child(toolbutton_z_up)
 
+		UI.spatial_toolbar(self).add_child(menu_button)
+		popup.connect("index_pressed", self, "_on_menu_button_popup_index_pressed")
+			
+#	if toolbutton_z_up == null:
+#		toolbutton_z_up = ToolButton.new()
+#		toolbutton_z_up.toggle_mode = true
+#		toolbutton_z_up.hint_tooltip = "Swap z and y axis lock shortcuts"
+#		toolbutton_z_up.connect("toggled", self, "_on_toolbutton_z_up_toggled")
+#		if UI.is_dark_theme(self):
+#			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
+#		else:
+#			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
+#
+#		toolbutton_z_up.pressed = UI.get_config_property("settings", "z_up", false)
+#		UI.spatial_toolbar(self).add_child(toolbutton_z_up)
+
+
+func _on_menu_button_popup_index_pressed(index: int):
+	var popup = menu_button.get_popup()
 	
+	# Z Up
+	if index == 0:
+		popup.set_item_checked(0, !popup.is_item_checked(0))
+		settings.zy_swapped = popup.is_item_checked(0)
+		return
+	# Snap controls
+	if index == 1:
+		popup.set_item_checked(1, !popup.is_item_checked(1))
+		settings.snap_controls_shown = popup.is_item_checked(1)
+		update_control_dock()
+
+
 func remove_toolbuttons():
-	if toolbutton_z_up != null:
-		if toolbutton_z_up.get_parent() != null:
-			toolbutton_z_up.get_parent().remove_child(toolbutton_z_up)
-		toolbutton_z_up.free()
-		toolbutton_z_up = null
+	if menu_button != null:
+		if menu_button.get_parent() != null:
+			menu_button.get_parent().remove_child(menu_button)
+		menu_button.free()
+		menu_button = null
+		
+#	if toolbutton_z_up != null:
+#		if toolbutton_z_up.get_parent() != null:
+#			toolbutton_z_up.get_parent().remove_child(toolbutton_z_up)
+#		toolbutton_z_up.free()
+#		toolbutton_z_up = null
 
 
-func _on_settings_changed():
-	if toolbutton_z_up != null:
-		if UI.is_dark_theme(self):
-			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
-		else:
-			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
+#func _on_settings_changed():
+#	if menu_button != null:
+#		var popup = menu_button.get_popup()
+##		if UI.is_dark_theme(self):
+##			popup.set_item_icon(0, preload("./icons/icon_z_up.svg"))
+##		else:
+##			popup.set_item_icon(0, preload("./icons/icon_z_up_light.svg"))
+#
+##	if toolbutton_z_up != null:
+##		if UI.is_dark_theme(self):
+##			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
+##		else:
+##			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
 	
 
 func register_callbacks(register: bool):
 	if register:
-		UI.connect_settings_changed(self, "_on_settings_changed")
+		connect("main_screen_changed", self, "_on_main_screen_changed")
+		#UI.connect_settings_changed(self, "_on_settings_changed")
 	else:
-		UI.disconnect_settings_changed(self, "_on_settings_changed")
+		disconnect("main_screen_changed", self, "_on_main_screen_changed")
+		#UI.disconnect_settings_changed(self, "_on_settings_changed")
+	pass
 
 
-func _on_toolbutton_z_up_toggled(toggled: bool):
-	settings.zy_swapped = toggled
+func _on_main_screen_changed(name: String):
+	update_control_dock()
+
+
+func update_control_dock():
+	control_dock.visible = settings.snap_controls_shown && UI.current_main_screen(self) == "3D"
+
+
+#func _on_toolbutton_z_up_toggled(toggled: bool):
+#	settings.zy_swapped = toggled
 
 
 func handles(object):
@@ -223,17 +286,27 @@ func is_snapping():
 	return snap_toggle
 
 
-func get_action_strength():
+func get_grab_action_strength(axis):
 	if !smoothing:
 		return 1.0
 	if state == GSRState.GRAB || state == GSRState.SCENE_PLACEMENT:
-		return 1.0 / settings.grab_snap_subd
+		if axis == GSRAxis.XZ:
+			return 1.0 / settings.grab_snap_subd_x
+		if axis == GSRAxis.Y:
+			return 1.0 / settings.grab_snap_subd_y
+	
+func get_action_strength():
+	if !smoothing:
+		return 1.0
 	else:
 		return 0.1
 	
 
-func grab_step_size():
-	return settings.grab_snap_size * get_action_strength()
+func grab_step_size(axis):
+	if axis == GSRAxis.XZ:
+		return settings.grab_snap_size_x * get_grab_action_strength(axis)
+	if axis == GSRAxis.Y:
+		return settings.grab_snap_size_y * get_grab_action_strength(axis)
 
 
 func rotate_step_size():
@@ -717,7 +790,7 @@ func update_scene_placement(camera: Camera):
 		return
 		
 	point = spatialparent.to_local(point)
-	point = Vector3(stepify(point.x, 1.0), stepify(point.y, 1.0), stepify(point.z, 1.0))
+	point = Vector3(stepify(point.x, grab_step_size(GSRAxis.XZ)), stepify(point.y, grab_step_size(GSRAxis.Y)), stepify(point.z, grab_step_size(GSRAxis.XZ)))
 	
 	spatialscene.transform.origin = point
 	
@@ -799,19 +872,20 @@ func apply_manipulation(camera: Camera):
 						offset = get_grab_offset_for_axis(offset, xvec).normalized() * constant
 						
 			if is_snapping():
-				var snapstep = grab_step_size()
-				
 				if limit == GSRLimit.NONE:
-					offset = Vector3(stepify(offset.x, snapstep), stepify(offset.y, snapstep), stepify(offset.z, snapstep));
+					offset = Vector3(stepify(offset.x, grab_step_size(GSRAxis.XZ)),
+							stepify(offset.y, grab_step_size(GSRAxis.Y)),
+							stepify(offset.z, grab_step_size(GSRAxis.XZ)))
+							
 				elif (limit & GSRLimit.X) || (limit & GSRLimit.Y) || (limit & GSRLimit.Z):
 					if (limit & GSRLimit.REVERSE):
 						var vec = get_limit_axis_reverse_vectors(ix)
-						var vec1 = offset.project(vec[0])
-						var vec2 = offset.project(vec[1])
+						var vec1 = offset.project(vec[0][0])
+						var vec2 = offset.project(vec[0][1])
 						
-						offset = vec1.normalized() * stepify(vec1.length(), snapstep) + vec2.normalized() * stepify(vec2.length(), snapstep)
+						offset = vec1.normalized() * stepify(vec1.length(), grab_step_size(vec[1][0])) + vec2.normalized() * stepify(vec2.length(), grab_step_size(vec[1][1]))
 					else:
-						offset = offset.normalized() * stepify(offset.length(), snapstep)
+						offset = offset.normalized() * stepify(offset.length(), grab_step_size(GSRAxis.Y if (limit & GSRLimit.Y) else GSRAxis.XZ ))
 						
 			offset_object(ix, offset)
 	elif state == GSRState.ROTATE:
@@ -960,6 +1034,8 @@ func get_limit_axis_reverse_plane(index: int) -> Plane:
 func get_limit_axis_reverse_vectors(index: int) -> Array:
 	var v1: Vector3
 	var v2: Vector3
+	var a1: int
+	var a2: int
 	if (limit & GSRLimit.X):
 		if !local || selection.size() <= index:
 			v1 = Vector3(0.0, 1.0, 0.0)
@@ -967,6 +1043,8 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 		else:
 			v1 = selection[index].global_transform.basis.y #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.z #- selection[index].global_transform.origin
+		a1 = GSRAxis.Y
+		a2 = GSRAxis.XZ
 	elif (limit & GSRLimit.Y):
 		if !local || selection.size() <= index:
 			v1 = Vector3(1.0, 0.0, 0.0)
@@ -974,14 +1052,18 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 		else:
 			v1 = selection[index].global_transform.basis.x #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.z #- selection[index].global_transform.origin
+		a1 = GSRAxis.XZ
+		a2 = GSRAxis.XZ
 	elif (limit & GSRLimit.Z):
 		if !local || selection.size() <= index:
-			v1 = Vector3(0.0, 1.0, 0.0)
-			v2 = Vector3(1.0, 0.0, 0.0)
+			v1 = Vector3(1.0, 0.0, 0.0)
+			v2 = Vector3(0.0, 1.0, 0.0)
 		else:
 			v1 = selection[index].global_transform.basis.x #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.y #- selection[index].global_transform.origin
-	return [v1.normalized(), v2.normalized()]
+		a1 = GSRAxis.XZ
+		a2 = GSRAxis.Y
+	return [[v1.normalized(), v2.normalized()], [a1, a2]]
 	
 
 func cancel_all():

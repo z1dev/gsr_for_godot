@@ -22,6 +22,10 @@ extends Object
 func _ready():
 	pass
 
+# To remember later:
+#ei.get_base_control() # panel 4036 - viewport/editornode/control/panel - parent of big vboxcontainer 
+#ei.get_editor_viewport() # vboxcontainer 4100 - canvasitemeditor, spatialeditor etc. parent
+	
 
 # Returns a child node of the control node if it matches the class name `childclass`.
 # It can return a specific child node with an `index` of all child nodes with the
@@ -36,6 +40,37 @@ static func find_child(control: Node, childclass: String, index: int = 0):
 				return c
 			index -= 1
 	return null
+
+
+static func get_menu_bar(editor: EditorPlugin):
+	var ei = editor.get_editor_interface()
+	return find_child(find_child(ei.get_base_control(), "VBoxContainer"), "HBoxContainer")
+
+
+static func current_main_screen(editor: EditorPlugin):
+	var ei = editor.get_editor_interface()
+	
+	var menubar = get_menu_bar(editor)
+	
+	var button_container = null
+	var ix = 0
+	while button_container == null:
+		var container = find_child(menubar, "HBoxContainer", ix)
+		if container == null:
+			break
+		var btn = find_child(container, "ToolButton")
+		if btn != null && btn.text == "2D":
+			button_container = container
+		else:
+			ix += 1
+	
+	if button_container != null:
+		for iy in button_container.get_child_count():
+			var btn = button_container.get_child(iy)
+			if btn != null && btn is ToolButton && btn.visible && btn.pressed:
+				return btn.text
+	
+	return ""
 
 
 static func fs_selected_path(editor: EditorPlugin):
