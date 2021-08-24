@@ -380,7 +380,8 @@ func forward_spatial_gui_input(camera, event):
 			return false
 			
 		if selected && event.scancode == KEY_SHIFT:
-			save_manipulation_mousepos()
+			if state != GSRState.NONE:
+				save_manipulation_mousepos()
 			smoothing = event.pressed
 		elif selected && event.scancode == KEY_CONTROL:
 			snap_toggle = event.pressed
