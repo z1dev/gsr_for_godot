@@ -117,6 +117,7 @@ var spatialparent: Spatial = null
 
 
 func _enter_tree():
+	settings.load_config()
 	add_toolbuttons()
 	add_control_dock()
 	
@@ -124,7 +125,7 @@ func _enter_tree():
 
 
 func _exit_tree():
-	UI.save_config({ "settings" : { "z_up" : settings.zy_swapped } })
+	settings.save_config()
 	register_callbacks(false)
 	
 	remove_toolbuttons()
@@ -152,7 +153,7 @@ func add_toolbuttons():
 		var popup = menu_button.get_popup()
 		popup.add_check_item("Z for up")
 		popup.set_item_tooltip(0, "Swap z and y axis-lock shortcuts")
-		popup.set_item_checked(0, UI.get_config_property("settings", "z_up", false))
+		popup.set_item_checked(0, settings.zy_swapped)
 		
 		popup.add_check_item("Snap options")
 		popup.set_item_tooltip(1, "Show snapping options in 3D editor")

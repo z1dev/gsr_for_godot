@@ -133,19 +133,42 @@ static func disconnect_settings_changed(editor: EditorPlugin, callback: String):
 	es.disconnect("settings_changed", editor, callback)
 
 
-static func get_config_property(section: String, name: String, default):
-	var config = ConfigFile.new()
-	if config.load("user://gsr.cfg") != OK:
-		return default
-	else:
-		return config.get_value(section, name, default)
+#static func get_config_property(section: String, name: String, default):
+#	var config = ConfigFile.new()
+#	if config.load("user://gsr.cfg") != OK:
+#		return default
+#	else:
+#		return config.get_value(section, name, default)
+
+
+# Reads the contents of an ini file and returns them as a dictionary of sections,
+# with values of key/value pair dictionaries.
+static func load_config(filename) -> Dictionary:
+	var config := ConfigFile.new()
+	config.load(filename)
 	
+	var r = {}
 	
-static func save_config(data):
+	var sections := config.get_sections()
+	for sec in sections:
+		var s = {}
+		var keys = config.get_section_keys(sec)
+		for key in keys:
+			var val = config.get_value(sec, key)
+			s[key] = val
+		r[sec] = s
+		
+	return r
+
+
+# Saves the data as an ini file. The data must be a dictionary of sections, with
+# values of key/value pair dictionaries. Does not erase or overwrite existing
+# values that are not in data.
+static func save_config(filename, data):
 	var config = ConfigFile.new()
 	# We don't care if it didn't load, just want to make sure that we get all
 	# the keys if it does load.
-	config.load("user://gsr.cfg")
+	config.load(filename)
 	for key in data.keys():
 		if typeof(key) != TYPE_STRING || !(data[key] is Dictionary):
 			continue
@@ -153,5 +176,5 @@ static func save_config(data):
 			if typeof(key2) != TYPE_STRING:
 				continue
 			config.set_value(key, key2, data[key][key2])
-	config.save("user://gsr.cfg")
+	config.save(filename)
 
