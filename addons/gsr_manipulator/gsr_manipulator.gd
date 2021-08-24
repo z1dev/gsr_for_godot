@@ -114,6 +114,8 @@ var spatialscene: Spatial = null
 # Parent node the "tiles" will be placed on in scene placement mode. Either the
 # root Spatial node if nothing is selected, or the selected spatial node.
 var spatialparent: Spatial = null
+# Path to packed scene being placed as "tile"
+var spatial_file_path: String = ""
 
 
 func _enter_tree():
@@ -381,7 +383,7 @@ func forward_spatial_gui_input(camera, event):
 			save_manipulation_mousepos()
 			smoothing = event.pressed
 		elif selected && event.scancode == KEY_CONTROL:
-			snap_toggle = !snap_toggle
+			snap_toggle = event.pressed
 			
 		if !event.pressed:
 			return false
@@ -438,8 +440,11 @@ func forward_spatial_gui_input(camera, event):
 			if event.button_index == BUTTON_RIGHT:
 				cancel_all()
 				return true
-			if event.button_index == BUTTON_LEFT && state != GSRState.SCENE_PLACEMENT:
-				finalize_manipulation()
+			if event.button_index == BUTTON_LEFT:
+				if state != GSRState.SCENE_PLACEMENT:
+					finalize_manipulation()
+					return true
+				finalize_scene_placement()
 				return true
 	
 	elif event is InputEventMouseMotion:
@@ -449,13 +454,15 @@ func forward_spatial_gui_input(camera, event):
 			return false
 		
 		if state == GSRState.SCENE_PLACEMENT:
-			update_scene_placement(camera)
+			update_scene_placement()
 			saved_mousepos = mousepos
+			
+			# Returning true here would prevent navigating the 3D view.
 			return false
 			
-		if state != GSRState.NONE:
+		elif state != GSRState.NONE:
 			if numerics.empty():
-				manipulate_selection(camera)
+				manipulate_selection()
 				
 		saved_mousepos = mousepos
 		return state != GSRState.NONE
@@ -651,28 +658,35 @@ func inside_viewrect(viewsize: Vector2, pt: Vector2):
 	return pt.x >= -0.001 && pt.y >= -0.001 && pt.x <= viewsize.x + 0.001 && pt.y <= viewsize.y + 0.001
 
 
+func get_placement_scene(path) -> PackedScene:
+	var ei = get_editor_interface()
+	
+	var fs = ei.get_resource_filesystem()
+	if fs.get_file_type(path) != "PackedScene":
+		return null
+	var ps: PackedScene = load(path)
+	if !ps.can_instance():
+		return null
+	var sstate = ps.get_state()
+	if sstate.get_node_count() < 1:
+		return null
+	if !ClassDB.class_exists(sstate.get_node_type(0)) && ClassDB.is_parent_class(sstate.get_node_type(0), "Spatial"):
+		return null
+	return ps
+
 func start_scene_placement(camera: Camera):
 	cancel_all()
 	
 	# Get the selected scene in the file system that can be instanced.
-	var path: String = UI.fs_selected_path(self)
-	if path.empty():
+	spatial_file_path = UI.fs_selected_path(self)
+	if spatial_file_path.empty():
+		return
+	
+	var ps := get_placement_scene(spatial_file_path)
+	if ps == null:
 		return
 	
 	var ei = get_editor_interface()
-	var fs = ei.get_resource_filesystem()
-	
-	if fs.get_file_type(path) != "PackedScene":
-		return
-	var ps: PackedScene = load(path)
-	if !ps.can_instance():
-		return
-	var sstate = ps.get_state()
-	if sstate.get_node_count() < 1:
-		return
-	if !ClassDB.class_exists(sstate.get_node_type(0)) && ClassDB.is_parent_class(sstate.get_node_type(0), "Spatial"):
-		return
-
 	var es = ei.get_selection()
 	var objects = es.get_transformable_selected_nodes()
 	if objects == null || objects.empty():
@@ -693,8 +707,9 @@ func start_scene_placement(camera: Camera):
 	
 	spatialscene = ps.instance()
 	spatialparent.add_child(spatialscene)
-	
-	update_scene_placement(camera)
+
+	editor_camera = camera	
+	update_scene_placement()
 	
 	
 func start_manipulation(camera: Camera, newstate):
@@ -750,7 +765,7 @@ func change_limit(camera, newlimit):
 		elif limit != 0:
 			local = lbd
 		limit = newlimit
-	apply_manipulation(camera)
+	apply_manipulation()
 
 
 func numeric_input(camera: Camera, ch):
@@ -769,7 +784,7 @@ func numeric_input(camera: Camera, ch):
 			numerics = numerics.substr(1)
 	else:
 		numerics += ch
-	apply_manipulation(camera)
+	apply_manipulation()
 
 
 func numeric_delete(camera: Camera):
@@ -782,15 +797,15 @@ func numeric_delete(camera: Camera):
 		
 	revert_manipulation()
 	numerics = numerics.substr(0, numerics.length() - 1)
-	apply_manipulation(camera)
+	apply_manipulation()
 
 
-func update_scene_placement(camera: Camera):
+func update_scene_placement():
 	if spatialscene == null:
 		return
 		
 	var plane = Plane(spatialparent.global_transform.basis.y, 0)
-	var point = plane.intersects_ray(camera.project_ray_origin(mousepos), camera.project_ray_normal(mousepos))
+	var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos), editor_camera.project_ray_normal(mousepos))
 	if point == null:
 		return
 		
@@ -798,14 +813,50 @@ func update_scene_placement(camera: Camera):
 	point = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ)), stepify(point.y, tile_step_size(GSRAxis.Y)), stepify(point.z, tile_step_size(GSRAxis.XZ)))
 	
 	spatialscene.transform.origin = point
-	
 
-func manipulate_selection(camera):
+
+func finalize_scene_placement():
+	if spatialscene == null || spatialparent == null:
+		reset_scene_action()
+		return
+	
+	var transform = spatialscene.transform
+	reset_scene_action()
+	
+	#spatialscene.owner = spatialparent.owner if spatialparent.owner != null else spatialparent
+	
+	var ur = get_undo_redo()
+	ur.create_action("GSR Scene Placement")
+	ur.add_do_method(self, "do_place_scene", spatial_file_path, spatialparent, transform)
+	ur.add_undo_method(self, "undo_place_scene", spatialparent)
+	ur.commit_action()
+	
+	reset()
+
+
+func do_place_scene(spath, sparent, stransform):
+	var ps := get_placement_scene(spath)
+	if ps == null || !is_instance_valid(sparent):
+		return
+	
+	var s = ps.instance()
+	sparent.add_child(s)
+	s.owner = sparent if sparent.owner == null else sparent.owner
+	s.transform = stransform
+
+
+func undo_place_scene(sparent):
+	if !is_instance_valid(sparent) || !(sparent is Spatial):
+		return
+	sparent.remove_child(sparent.get_child(sparent.get_child_count() - 1)) 
+
+
+func manipulate_selection():
 	if state == GSRState.NONE || state == GSRState.SCENE_PLACEMENT:
 		return
 	
 	revert_manipulation()
-	apply_manipulation(camera)
+	apply_manipulation()
 
 
 # Moves/rotates/scales selection back to original transform before manipulation
@@ -824,11 +875,11 @@ func reset_scene_action():
 		spatialscene = null
 
 
-func apply_manipulation(camera: Camera):
+func apply_manipulation():
 	if state == GSRState.SCENE_PLACEMENT || selection.empty():
 		return
 	
-	camera = editor_camera
+	var camera := editor_camera
 	
 	var constant = null
 	if !numerics.empty():
