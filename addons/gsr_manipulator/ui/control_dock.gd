@@ -154,6 +154,7 @@ func _on_revert_preset_pressed():
 func _on_snap_y_box_pressed():
 	snap_edit_y.editable = snap_y_box.pressed
 	subd_edit_y.editable = snap_y_box.pressed
+	update_revert_button()
 	
 
 func _on_snap_finalized():
@@ -179,6 +180,7 @@ func _on_preset_options_item_selected(index: int):
 		editor.settings.set_snap_values(float(snap_edit_x.text), int(subd_edit_x.text), snap_y_box.pressed, float(snap_edit_y.text), int(subd_edit_y.text))
 		del_button.disabled = true
 		update_revert_button()
+		_on_snap_y_box_pressed()
 		return
 	var snap = str(editor.settings.snap_preset_snap(index, false))
 	if !('.' in snap):
@@ -194,6 +196,7 @@ func _on_preset_options_item_selected(index: int):
 	editor.settings.select_snap_preset(index)
 	del_button.disabled = false
 	update_revert_button()
+	_on_snap_y_box_pressed()
 
 
 func save_preset(text: String):
