@@ -303,12 +303,6 @@ func is_snapping():
 	return snap_toggle
 
 
-#func get_grab_action_strength():
-#	if !smoothing:
-#		return 1.0
-#	return 1.0 / settings.grab_snap_subd_x
-
-
 func get_grab_action_strength():
 	if !smoothing:
 		return 1.0
@@ -322,7 +316,6 @@ func get_action_strength():
 
 
 func grab_step_size():
-	
 	return settings.grab_snap_size_x * get_grab_action_strength()
 
 
@@ -347,9 +340,9 @@ func tile_step_size(axis: int, with_smoothing: bool):
 func hide_gizmo():
 	if gizmohidden:
 		return
-	
+
 	gizmohidden = true
-	
+
 	saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
 	UI.set_setting(self, "editors/3d/manipulator_gizmo_size", 0)
 	
@@ -357,9 +350,9 @@ func hide_gizmo():
 func show_gizmo():
 	if !gizmohidden:
 		return
-		
+
 	gizmohidden = false
-	
+
 	UI.set_setting(self, "editors/3d/manipulator_gizmo_size", saved_gizmo_size)
 	saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
 	
@@ -400,28 +393,38 @@ func forward_spatial_gui_input(camera, event):
 			return false
 			
 		if event.scancode == KEY_SHIFT:
-			if state != GSRState.NONE:
-				save_manipulation_mousepos()
+			if state == GSRState.NONE:
+				return false
+			save_manipulation_mousepos()
 			smoothing = event.pressed
-		elif selected && event.scancode == KEY_CONTROL:
+		elif event.scancode == KEY_CONTROL:
+			if state == GSRState.NONE:
+				return false
 			snap_toggle = event.pressed
-			
 		if !event.pressed:
 			return false
 		
 		if selected && char(event.unicode) == 'g':
+			if state == GSRState.GRAB:
+				return false
 			start_manipulation(camera, GSRState.GRAB)
 			saved_mousepos = mousepos
 			return true
 		elif selected && char(event.unicode) == 'r':
+			if state == GSRState.ROTATE:
+				return false
 			start_manipulation(camera, GSRState.ROTATE)
 			saved_mousepos = mousepos
 			return true
 		elif selected && char(event.unicode) == 's':
+			if state == GSRState.SCALE:
+				return false
 			start_manipulation(camera, GSRState.SCALE)
 			saved_mousepos = mousepos
 			return true
 		elif char(event.unicode) == 'a':
+			if state == GSRState.SCENE_PLACEMENT:
+				return false
 			start_scene_placement(camera)
 			saved_mousepos = mousepos
 			return true
@@ -461,13 +464,18 @@ func forward_spatial_gui_input(camera, event):
 			if event.button_index == BUTTON_RIGHT:
 				cancel_all()
 				return true
-			if event.button_index == BUTTON_LEFT:
+			elif event.button_index == BUTTON_LEFT:
 				if state != GSRState.SCENE_PLACEMENT:
 					finalize_manipulation()
 					return true
 				finalize_scene_placement()
 				return true
-	
+			elif snap_toggle && state == GSRState.SCENE_PLACEMENT && (event.button_index == BUTTON_WHEEL_UP ||
+					event.button_index == BUTTON_WHEEL_DOWN):
+				var dir = 1.0 if event.button_index == BUTTON_WHEEL_UP else -1.0
+				var amount = 15.0 if !smoothing else 5.0
+				spatialscene.rotate_y(dir * PI / 180.0 * amount)
+				return true
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
 		if state == GSRState.NONE:
@@ -502,7 +510,7 @@ func current_camera_position(event: InputEventMouseMotion, camera: Camera) -> Ve
 
 func forward_spatial_draw_over_viewport(overlay):
 	# Hack to check if this overlay is the one we use right now:
-	if overlay.get_parent().get_child(0).get_child(0).get_child(0) != editor_camera:
+	if !is_instance_valid(editor_camera) || overlay.get_parent().get_child(0).get_child(0).get_child(0) != editor_camera:
 		return
 		
 	if state == GSRState.NONE || state == GSRState.SCENE_PLACEMENT:
@@ -762,11 +770,34 @@ func start_manipulation(camera: Camera, newstate):
 		reset()
 	else:
 		selection_center = Vector3.ZERO
+		
+		var alternate_center = true
+		var sel_min: Vector3
+		var sel_max: Vector3
+		
 		for ix in selection.size():
 			start_transform[ix] = selection[ix].transform
 			start_global_transform[ix] = selection[ix].global_transform
-			selection_center += selection[ix].global_transform.origin
-		selection_center /= selection.size()
+			
+			var ori = selection[ix].global_transform.origin
+			if !alternate_center:
+				selection_center += ori
+			else:
+				if ix == 0:
+					sel_min = ori
+					sel_max = ori
+				else:
+					sel_min.x = min(sel_min.x, ori.x)
+					sel_min.y = min(sel_min.y, ori.y)
+					sel_min.z = min(sel_min.z, ori.z)
+					sel_max.x = max(sel_max.x, ori.x)
+					sel_max.y = max(sel_max.y, ori.y)
+					sel_max.z = max(sel_max.z, ori.z)
+		if !alternate_center:
+			selection_center /= selection.size()
+		else:
+			selection_center = (sel_min + sel_max) / 2.0
+			
 		selection_centerpos = camera.unproject_position(selection_center)
 		selection_distance = selection_center.distance_to(camera.project_ray_origin(selection_centerpos))
 		start_viewpoint = camera.project_position(mousepos, selection_distance)
@@ -1203,6 +1234,7 @@ func offset_object(index: int, movedby: Vector3):
 
 func rotate_object(index: int, angle: float, center: Vector3, axis: Vector3, in_place: bool):
 	var obj = selection[index]
+	
 	var displaced
 	if !in_place:
 		displaced = obj.global_transform.origin - center
