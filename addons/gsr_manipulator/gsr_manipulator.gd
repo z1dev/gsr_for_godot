@@ -309,14 +309,21 @@ func is_snapping():
 #	return 1.0 / settings.grab_snap_subd_x
 
 
+func get_grab_action_strength():
+	if !smoothing:
+		return 1.0
+	return 1.0 / settings.grab_snap_subd_x
+
+
 func get_action_strength():
 	if !smoothing:
 		return 1.0
 	return 0.1
-	
+
 
 func grab_step_size():
-	return settings.grab_snap_size_x * get_action_strength()
+	
+	return settings.grab_snap_size_x * get_grab_action_strength()
 
 
 func rotate_step_size():
