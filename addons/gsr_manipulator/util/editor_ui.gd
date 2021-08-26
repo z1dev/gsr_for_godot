@@ -19,9 +19,6 @@ tool
 extends Object
 
 
-func _ready():
-	pass
-
 # To remember later:
 #ei.get_base_control() # panel 4036 - viewport/editornode/control/panel - parent of big vboxcontainer 
 #ei.get_editor_viewport() # vboxcontainer 4100 - canvasitemeditor, spatialeditor etc. parent

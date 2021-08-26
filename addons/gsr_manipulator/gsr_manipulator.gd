@@ -19,8 +19,10 @@ tool
 extends EditorPlugin
 
 const UI = preload("./util/editor_ui.gd")
+const FS = preload("./util/file_system.gd")
 const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
+const GridMesh = preload("./mesh/grid_mesh.gd")
 
 # Separate script for stuff that needs to persist
 var settings: PluginSettings = PluginSettings.new()
@@ -118,23 +120,26 @@ var spatialparent: Spatial = null
 var spatial_file_path: String = ""
 
 
+var grid_mesh = null
+
+
 func _enter_tree():
 	settings.load_config()
 	add_toolbuttons()
 	add_control_dock()
-	
 	register_callbacks(true)
+	generate_grid_mesh()
 
 
 func _exit_tree():
 	settings.save_config()
 	register_callbacks(false)
-	
 	remove_toolbuttons()
 	# Make sure we don't hold a reference of anything
 	reset()
 	selected_objects = weakref(null)
 	remove_control_dock()
+	free_grid_mesh()
 
 
 func add_control_dock():
@@ -160,8 +165,13 @@ func add_toolbuttons():
 		popup.add_check_item("Snap options")
 		popup.set_item_tooltip(1, "Show snapping options in 3D editor")
 		popup.set_item_checked(1, settings.snap_controls_shown)
-
-
+		
+		popup.add_separator()
+		
+		popup.add_item("Unpack scene...")
+		popup.set_item_tooltip(3, "Save child scenes in their own scene files.")
+		
+		
 		UI.spatial_toolbar(self).add_child(menu_button)
 		popup.connect("index_pressed", self, "_on_menu_button_popup_index_pressed")
 			
@@ -192,6 +202,9 @@ func _on_menu_button_popup_index_pressed(index: int):
 		popup.set_item_checked(1, !popup.is_item_checked(1))
 		settings.snap_controls_shown = popup.is_item_checked(1)
 		update_control_dock()
+	# Unpack scene
+	if index == 3:
+		unpack_scene()
 
 
 func remove_toolbuttons():
@@ -314,8 +327,8 @@ func scale_step_size():
 	return 0.1 * get_action_strength()
 
 
-func tile_step_size(axis: int):
-	if !smoothing:
+func tile_step_size(axis: int, with_smoothing: bool):
+	if !smoothing || !with_smoothing:
 		if axis == GSRAxis.XZ:
 			return settings.grab_snap_size_x
 		return settings.grab_snap_size_y
@@ -379,7 +392,7 @@ func forward_spatial_gui_input(camera, event):
 		if event.echo:
 			return false
 			
-		if selected && event.scancode == KEY_SHIFT:
+		if event.scancode == KEY_SHIFT:
 			if state != GSRState.NONE:
 				save_manipulation_mousepos()
 			smoothing = event.pressed
@@ -710,7 +723,11 @@ func start_scene_placement(camera: Camera):
 	spatialparent.add_child(spatialscene)
 
 	editor_camera = camera	
+	
+	if grid_mesh != null:
+		spatialparent.add_child(grid_mesh)
 	update_scene_placement()
+		
 	
 	
 func start_manipulation(camera: Camera, newstate):
@@ -808,12 +825,19 @@ func update_scene_placement():
 	var plane = Plane(spatialparent.global_transform.basis.y, 0)
 	var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos), editor_camera.project_ray_normal(mousepos))
 	if point == null:
+		if grid_mesh != null:
+			grid_mesh.visible = false
 		return
 		
 	point = spatialparent.to_local(point)
-	point = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ)), stepify(point.y, tile_step_size(GSRAxis.Y)), stepify(point.z, tile_step_size(GSRAxis.XZ)))
+	var place = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, false)), stepify(point.y, tile_step_size(GSRAxis.Y, false)), stepify(point.z, tile_step_size(GSRAxis.XZ, false)))
+	var point_dif = Vector3.ZERO
+	if smoothing:
+		point_dif = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, true)), stepify(point.y, tile_step_size(GSRAxis.Y, true)), stepify(point.z, tile_step_size(GSRAxis.XZ, true))) - place
 	
-	spatialscene.transform.origin = point
+	spatialscene.transform.origin = place + point_dif
+	grid_mesh.visible = true
+	update_grid_position(place)
 
 
 func finalize_scene_placement():
@@ -874,6 +898,8 @@ func reset_scene_action():
 	if spatialscene != null:
 		spatialscene.queue_free()
 		spatialscene = null
+	if grid_mesh != null && grid_mesh.get_parent() != null:
+		grid_mesh.get_parent().remove_child(grid_mesh)
 
 
 func apply_manipulation():
@@ -1188,3 +1214,51 @@ func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector
 	
 	obj.global_transform.origin = (obj.global_transform.origin - center) * pos_scale + center
 
+
+func generate_grid_mesh():
+	grid_mesh = GridMesh.new(self)
+
+
+func free_grid_mesh():
+	grid_mesh.free()
+	grid_mesh = null
+
+
+func check_grid():
+	if grid_mesh == null:
+		generate_grid_mesh()
+	else:
+		grid_mesh.update()
+
+func update_grid_position(center):
+	grid_mesh.transform.origin = center
+
+
+func unpack_scene():
+	var scene = get_editor_interface().get_edited_scene_root()
+	if scene == null:
+		return
+		
+	var dlg := FS.show_file_dialog(self, "Select Destination Folder", false)
+	dlg.connect("dir_selected", self, "_on_unpack_dir_selected")
+	dlg.connect("hide", self, "_on_dialog_closed", [dlg])
+
+
+func _on_dialog_closed(dlg):
+	dlg.queue_free()
+
+
+func _on_unpack_dir_selected(dir):
+	var scene = get_editor_interface().get_edited_scene_root()
+	
+	for ix in scene.get_child_count():
+		var node = scene.get_child(ix)
+		if !(node is Spatial):
+			continue
+		var name = node.name
+		var unpacked = PackedScene.new()
+		unpacked.pack(node)
+		if ResourceSaver.save(dir + "/" + name + ".tscn", unpacked) == OK:
+			print("Saving file: " + dir + "/" + name + ".tscn")
+		else:
+			print("Error. Failed to save " + dir + "/" + name + ".tscn")
