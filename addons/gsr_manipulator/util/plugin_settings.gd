@@ -21,6 +21,7 @@ extends Node
 
 const UI = preload("./editor_ui.gd")
 
+signal snap_settings_changed()
 
 
 # Unit size for snapping when grab-moving a node on the x/z axes.
@@ -171,21 +172,28 @@ func delete_snap_preset(index: int):
 
 func select_snap_preset(index: int):
 	if index < 0 || index >= snap_presets.size():
-		grab_snap_size_x = 1.0
-		grab_snap_subd_x = 10
-		grab_snap_size_y = 1.0
-		grab_snap_subd_y = 10
+		set_snap_values(1.0, 10, false, 1.0, 10)
 		return
+		
 	grab_snap_size_x = snap_presets[index].snap_x
 	grab_snap_subd_x = snap_presets[index].subd_x
 	grab_snap_size_y = snap_presets[index].snap_y
 	grab_snap_subd_y = snap_presets[index].subd_y
+	
+	set_snap_values(snap_presets[index].snap_x, snap_presets[index].subd_x,
+			snap_presets[index].use_y, snap_presets[index].snap_y, snap_presets[index].subd_y)
 
 
 func set_snap_values(snap_x: float, subd_x: int, use_y: bool, snap_y: float, subd_y: int):
+	if (grab_snap_size_x == snap_x && grab_snap_subd_x == subd_x &&
+			(use_y_grab_snap == use_y && (!use_y || (grab_snap_size_y == snap_y && grab_snap_subd_y == subd_y))) ):
+		return
+	
 	grab_snap_size_x = snap_x
 	grab_snap_subd_x = subd_x
 	grab_snap_size_y = snap_y
 	grab_snap_subd_y = subd_y
 	use_y_grab_snap = use_y
+	
+	emit_signal("snap_settings_changed")
 

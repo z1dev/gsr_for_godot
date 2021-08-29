@@ -165,7 +165,6 @@ func _on_snap_finalized():
 	del_button.disabled = (preset_options.selected == -1 ||
 			preset_options.selected >= editor.settings.snap_preset_count())
 	update_revert_button()
-	editor.check_grid()
 
 
 func update_revert_button():

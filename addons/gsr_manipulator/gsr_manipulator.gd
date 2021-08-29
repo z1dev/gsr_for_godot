@@ -34,6 +34,7 @@ enum GSRState { NONE, GRAB, ROTATE, SCALE, SCENE_PLACEMENT }
 enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
 # Axis for reading snapping values.
 enum GSRAxis { XZ = 0, Y = 1 }
+enum GSRPlane {X = 1, Y = 2, Z = 4}
 
 # Objects manipulated by this plugin are selected
 var selected := false
@@ -118,12 +119,19 @@ var spatialscene: Spatial = null
 var spatialparent: Spatial = null
 # Path to packed scene being placed as "tile"
 var spatial_file_path: String = ""
-
+# Offset of spatial node from the grid point during placement, when movement was smooth.
+var spatial_offset: Vector3
+# Rotation of spatial node on the y axis when placing it on the grid.
+var spatial_rotation: float
+# Normal vector direction of the placement grid of spatial nodes. Plane's distance
+# from the 0 position is in `spatial_offset`.
+var spatial_placement_plane: int = GSRPlane.Y
 
 var grid_mesh = null
 
 
 func _enter_tree():
+	settings.connect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.load_config()
 	add_toolbuttons()
 	add_control_dock()
@@ -132,6 +140,7 @@ func _enter_tree():
 
 
 func _exit_tree():
+	settings.disconnect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.save_config()
 	register_callbacks(false)
 	remove_toolbuttons()
@@ -213,7 +222,13 @@ func remove_toolbuttons():
 			menu_button.get_parent().remove_child(menu_button)
 		menu_button.free()
 		menu_button = null
-		
+
+
+func _on_snap_settings_changed():
+	spatial_offset = Vector3.ZERO
+	check_grid()
+
+
 #	if toolbutton_z_up != null:
 #		if toolbutton_z_up.get_parent() != null:
 #			toolbutton_z_up.get_parent().remove_child(toolbutton_z_up)
@@ -328,7 +343,7 @@ func scale_step_size():
 
 
 func tile_step_size(axis: int, with_smoothing: bool):
-	if !smoothing || !with_smoothing:
+	if !with_smoothing:
 		if axis == GSRAxis.XZ:
 			return settings.grab_snap_size_x
 		return settings.grab_snap_size_y
@@ -389,6 +404,15 @@ func save_manipulation_mousepos():
 	
 func forward_spatial_gui_input(camera, event):
 	if event is InputEventKey:
+		
+		if state == GSRState.SCENE_PLACEMENT:
+			if char(event.unicode) == ',':
+				floor_change_scene_placement(-1)
+				return true
+			if char(event.unicode) == '.':
+				floor_change_scene_placement(1)
+				return true
+		
 		if event.echo:
 			return false
 			
@@ -403,60 +427,64 @@ func forward_spatial_gui_input(camera, event):
 			snap_toggle = event.pressed
 		if !event.pressed:
 			return false
-		
 		if selected && char(event.unicode) == 'g':
-			if state == GSRState.GRAB:
+			if state == GSRState.GRAB || state == GSRState.SCENE_PLACEMENT:
 				return false
 			start_manipulation(camera, GSRState.GRAB)
 			saved_mousepos = mousepos
 			return true
-		elif selected && char(event.unicode) == 'r':
-			if state == GSRState.ROTATE:
-				return false
+		elif (selected && state != GSRState.ROTATE && state != GSRState.SCENE_PLACEMENT &&
+				char(event.unicode) == 'r'):
 			start_manipulation(camera, GSRState.ROTATE)
 			saved_mousepos = mousepos
 			return true
-		elif selected && char(event.unicode) == 's':
-			if state == GSRState.SCALE:
-				return false
+		elif (selected && state != GSRState.SCALE && state != GSRState.SCENE_PLACEMENT &&
+				char(event.unicode) == 's'):
 			start_manipulation(camera, GSRState.SCALE)
 			saved_mousepos = mousepos
 			return true
-		elif char(event.unicode) == 'a':
-			if state == GSRState.SCENE_PLACEMENT:
-				return false
+		elif state != GSRState.SCENE_PLACEMENT && char(event.unicode) == 'a':
 			start_scene_placement(camera)
 			saved_mousepos = mousepos
 			return true
 		elif event.scancode == KEY_ESCAPE:
 			cancel_all()
 			return true
-		elif state != GSRState.NONE && state != GSRState.SCENE_PLACEMENT:
+		elif state == GSRState.SCENE_PLACEMENT:
+			if char(event.unicode) == 'x' || char(event.unicode) == 'X':
+				change_scene_limit(GSRLimit.X)
+			if ((!settings.zy_swapped && (char(event.unicode) == 'y' || char(event.unicode) == 'Y')) ||
+					(settings.zy_swapped && (char(event.unicode) == 'z' || char(event.unicode) == 'Z'))):
+				change_scene_limit(GSRLimit.Y)
+			if ((!settings.zy_swapped && (char(event.unicode) == 'z' || char(event.unicode) == 'Z')) ||
+					(settings.zy_swapped && (char(event.unicode) == 'y' || char(event.unicode) == 'Y'))):
+				change_scene_limit(GSRLimit.Z)
+		elif state != GSRState.NONE:
 			var newlimit = 0
 			if event.scancode == KEY_ENTER || event.scancode == KEY_KP_ENTER:
 				finalize_manipulation()
 				return true
 			elif char(event.unicode) == 'x' || char(event.unicode) == 'X':
-				change_limit(camera, GSRLimit.X | (GSRLimit.REVERSE if event.shift else 0))
+				change_limit(GSRLimit.X | (GSRLimit.REVERSE if event.shift else 0))
 				return true
 			elif char(event.unicode) == 'y' || char(event.unicode) == 'Y':
 				if !settings.zy_swapped:
-					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
+					change_limit(GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
 				else:
-					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
+					change_limit(GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
 				return true
 			elif char(event.unicode) == 'z' || char(event.unicode) == 'Z':
 				if !settings.zy_swapped:
-					change_limit(camera, GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
+					change_limit(GSRLimit.Z | (GSRLimit.REVERSE if event.shift else 0))
 				else:
-					change_limit(camera, GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
+					change_limit(GSRLimit.Y | (GSRLimit.REVERSE if event.shift else 0))
 				return true
 			elif (char(event.unicode) >= '0' && char(event.unicode) <= '9' ||
 					char(event.unicode) == '.' || char(event.unicode) == '-'):
-				numeric_input(camera, char(event.unicode))
+				numeric_input(char(event.unicode))
 				return true
 			elif event.scancode == KEY_BACKSPACE:
-				numeric_delete(camera)
+				numeric_delete()
 				return true
 	
 	elif event is InputEventMouseButton:
@@ -465,16 +493,18 @@ func forward_spatial_gui_input(camera, event):
 				cancel_all()
 				return true
 			elif event.button_index == BUTTON_LEFT:
-				if state != GSRState.SCENE_PLACEMENT:
+				if state == GSRState.SCENE_PLACEMENT:
+					finalize_scene_placement()
+				else:
 					finalize_manipulation()
-					return true
-				finalize_scene_placement()
 				return true
 			elif snap_toggle && state == GSRState.SCENE_PLACEMENT && (event.button_index == BUTTON_WHEEL_UP ||
 					event.button_index == BUTTON_WHEEL_DOWN):
-				var dir = 1.0 if event.button_index == BUTTON_WHEEL_UP else -1.0
-				var amount = 15.0 if !smoothing else 5.0
-				spatialscene.rotate_y(dir * PI / 180.0 * amount)
+				if event.is_pressed():
+					var dir = 1.0 if event.button_index == BUTTON_WHEEL_UP else -1.0
+					var amount = 15.0 if !smoothing else 5.0
+					spatial_rotation += dir * PI / 180.0 * amount
+					spatialscene.rotate_y(dir * PI / 180.0 * amount)
 				return true
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
@@ -741,6 +771,7 @@ func start_scene_placement(camera: Camera):
 	
 	if grid_mesh != null:
 		spatialparent.add_child(grid_mesh)
+	spatialscene.rotate_y(spatial_rotation)
 	update_scene_placement()
 		
 	
@@ -808,7 +839,17 @@ func start_manipulation(camera: Camera, newstate):
 		editor_camera = camera
 
 
-func change_limit(camera, newlimit):
+func change_scene_limit(newlimit):
+	if state == GSRState.SCENE_PLACEMENT:
+		if limit == 0 || limit != newlimit:
+			limit = newlimit
+			update_scene_placement()
+		else:
+			limit = 0
+			update_scene_placement()
+
+
+func change_limit(newlimit):
 	revert_manipulation()
 	if newlimit != 0:
 		var lbd = is_local_button_down()
@@ -824,7 +865,7 @@ func change_limit(camera, newlimit):
 	apply_manipulation()
 
 
-func numeric_input(camera: Camera, ch):
+func numeric_input(ch):
 	if ch == '.':
 		if numerics.find('.') != -1:
 			return
@@ -843,7 +884,7 @@ func numeric_input(camera: Camera, ch):
 	apply_manipulation()
 
 
-func numeric_delete(camera: Camera):
+func numeric_delete():
 	if numerics.empty():
 		return
 	
@@ -856,27 +897,107 @@ func numeric_delete(camera: Camera):
 	apply_manipulation()
 
 
+# Returns the axis of a spatial based on the GSRPlane axis parameter. Set global to false to get
+# the local axis instead of the global vector.
+func plane_axis(spatial, planeaxis, global = true):
+	if global:
+		return spatial.global_transform.basis.x if planeaxis == GSRPlane.X else (
+				spatial.global_transform.basis.y if planeaxis == GSRPlane.Y else
+				spatial.global_transform.basis.z)
+	return spatial.transform.basis.x if planeaxis == GSRPlane.X else (
+			spatial.transform.basis.y if planeaxis == GSRPlane.Y else
+			spatial.transform.basis.z)
+
+
+# Returns a plane from a normal and a point it should contain.
+func plane_from_point(normal, point: Vector3):
+	if normal == null || normal == Vector3.ZERO:
+		return null
+		
+	return Plane(normal, Plane(normal, 0.0).distance_to(point))
+
+
+func scene_placement_plane() -> Plane:
+	return plane_from_point(plane_axis(spatialparent, spatial_placement_plane),
+			spatialparent.global_transform.origin + spatial_offset)
+#	var point = spatialparent.global_transform.origin + spatial_offset
+#	var normal = (spatialparent.global_transform.basis.x if spatial_placement_plane == GSRPlane.X else
+#			(spatialparent.global_transform.basis.y if spatial_placement_plane == GSRPlane.Y else 
+#			-spatialparent.global_transform.basis.z))
+#	var plane = Plane(normal, 0.0)
+#	var dir = 1 if plane.is_point_over(point) else -1
+#	return Plane(normal, plane.distance_to(point) * dir)
+
+
+func scene_placement_limited_plane():
+	var plane = plane_from_point(plane_axis(spatialparent, limit), spatialparent.global_transform.origin)
+
+	#var point = plane.project(spatialscene.global_transform.origin) #spatialparent.global_transform.origin + spatial_offset
+
+	return plane_from_point(editor_camera.global_transform.basis.z,
+			spatialscene.global_transform.origin)
+
+
 func update_scene_placement():
 	if spatialscene == null:
 		return
-		
-	var plane = Plane(spatialparent.global_transform.basis.y, 0)
-	var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos), editor_camera.project_ray_normal(mousepos))
-	if point == null:
-		if grid_mesh != null:
-			grid_mesh.visible = false
-		return
-		
-	point = spatialparent.to_local(point)
-	var place = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, false)), stepify(point.y, tile_step_size(GSRAxis.Y, false)), stepify(point.z, tile_step_size(GSRAxis.XZ, false)))
-	var point_dif = Vector3.ZERO
-	if smoothing:
-		point_dif = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, true)), stepify(point.y, tile_step_size(GSRAxis.Y, true)), stepify(point.z, tile_step_size(GSRAxis.XZ, true))) - place
 	
-	spatialscene.transform.origin = place + point_dif
-	grid_mesh.visible = true
-	update_grid_position(place)
+	if limit != spatial_placement_plane:
+		var plane = scene_placement_plane()
+				
+		var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos), editor_camera.project_ray_normal(mousepos))
+		if point == null:
+			if grid_mesh != null:
+				grid_mesh.visible = false
+			return
+			
+		point = spatialparent.to_local(point)
+		var place = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, false)), stepify(point.y, tile_step_size(GSRAxis.Y, false)), stepify(point.z, tile_step_size(GSRAxis.XZ, false)))
+		if smoothing:
+			spatial_offset = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, smoothing)), stepify(point.y, tile_step_size(GSRAxis.Y, smoothing)), stepify(point.z, tile_step_size(GSRAxis.XZ, smoothing))) - place
+			spatial_offset.x = fmod(spatial_offset.x, tile_step_size(GSRAxis.XZ, false))
+			spatial_offset.z = fmod(spatial_offset.z, tile_step_size(GSRAxis.XZ, false))
+		if limit == 0:
+			spatialscene.transform.origin = place + spatial_offset
+		elif limit == GSRLimit.X:
+			spatialscene.transform.origin.x = (place + spatial_offset).x
+		elif limit == GSRLimit.Y:
+			spatialscene.transform.origin.y = (place + spatial_offset).y
+		else:
+			spatialscene.transform.origin.z = (place + spatial_offset).z
+			
+		grid_mesh.visible = true
+		update_grid_position(spatialscene.transform.origin - spatial_offset)
+	else:
+		var plane = scene_placement_limited_plane() 
+		if plane == null:
+			if grid_mesh != null:
+				grid_mesh.visible = false
+			return
+			
+		var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos),
+				editor_camera.project_ray_normal(mousepos))
+		if point == null:
+			if grid_mesh != null:
+				grid_mesh.visible = false
+			return
+		
+		point = spatialparent.to_local(point)
+		var place = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, true)), stepify(point.y, tile_step_size(GSRAxis.Y, true)), stepify(point.z, tile_step_size(GSRAxis.XZ, true)))
+		if limit == GSRLimit.X:
+			spatialscene.transform.origin.x = (place + spatial_offset).x
+		elif limit == GSRLimit.Y:
+			spatialscene.transform.origin.y = (place + spatial_offset).y
+		else:
+			spatialscene.transform.origin.z = (place + spatial_offset).z
+			
+		grid_mesh.visible = true
+		update_grid_position(spatialscene.transform.origin - spatial_offset)
 
+
+func floor_change_scene_placement(direction: int):
+	spatial_offset.y += direction * tile_step_size(GSRAxis.Y, true)
+	update_scene_placement()
 
 func finalize_scene_placement():
 	if spatialscene == null || spatialparent == null:
@@ -1218,6 +1339,9 @@ func reset():
 	spatialscene = null
 	spatialparent = null
 	
+	smoothing = false
+	snap_toggle = false
+	
 	show_gizmo()
 	update_overlays()
 	#Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -1270,7 +1394,9 @@ func check_grid():
 		grid_mesh.update()
 
 func update_grid_position(center):
-	grid_mesh.transform.origin = center
+	grid_mesh.transform.origin = center + Vector3(spatial_offset.x if spatial_placement_plane == GSRPlane.X else 0.0,
+			spatial_offset.y if spatial_placement_plane == GSRPlane.Y else 0.0,
+			spatial_offset.z if spatial_placement_plane == GSRPlane.Z else 0.0)
 
 
 func unpack_scene():
