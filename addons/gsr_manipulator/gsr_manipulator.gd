@@ -34,6 +34,7 @@ enum GSRState { NONE, GRAB, ROTATE, SCALE, SCENE_PLACEMENT }
 enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
 # Axis for reading snapping values.
 enum GSRAxis { XZ = 0, Y = 1 }
+# Spatial "tile" placement plane's floor normal.
 enum GSRPlane {X = 1, Y = 2, Z = 4}
 
 # Objects manipulated by this plugin are selected
@@ -344,7 +345,7 @@ func scale_step_size():
 
 func tile_step_size(axis: int, with_smoothing: bool):
 	if !with_smoothing:
-		if axis == GSRAxis.XZ:
+		if axis == GSRAxis.XZ || !settings.use_y_grab_snap:
 			return settings.grab_snap_size_x
 		return settings.grab_snap_size_y
 	if axis == GSRAxis.XZ || !settings.use_y_grab_snap:
@@ -452,13 +453,22 @@ func forward_spatial_gui_input(camera, event):
 			return true
 		elif state == GSRState.SCENE_PLACEMENT:
 			if char(event.unicode) == 'x' || char(event.unicode) == 'X':
-				change_scene_limit(GSRLimit.X)
+				if event.shift:
+					change_scene_plane(GSRPlane.X)
+				else:
+					change_scene_limit(GSRLimit.X)
 			if ((!settings.zy_swapped && (char(event.unicode) == 'y' || char(event.unicode) == 'Y')) ||
 					(settings.zy_swapped && (char(event.unicode) == 'z' || char(event.unicode) == 'Z'))):
-				change_scene_limit(GSRLimit.Y)
+				if event.shift:
+					change_scene_plane(GSRPlane.Y)
+				else:
+					change_scene_limit(GSRLimit.Y)
 			if ((!settings.zy_swapped && (char(event.unicode) == 'z' || char(event.unicode) == 'Z')) ||
 					(settings.zy_swapped && (char(event.unicode) == 'y' || char(event.unicode) == 'Y'))):
-				change_scene_limit(GSRLimit.Z)
+				if event.shift:
+					change_scene_plane(GSRPlane.Z)
+				else:
+					change_scene_limit(GSRLimit.Z)
 		elif state != GSRState.NONE:
 			var newlimit = 0
 			if event.scancode == KEY_ENTER || event.scancode == KEY_KP_ENTER:
@@ -840,14 +850,25 @@ func start_manipulation(camera: Camera, newstate):
 
 
 func change_scene_limit(newlimit):
-	if state == GSRState.SCENE_PLACEMENT:
-		if limit == 0 || limit != newlimit:
-			limit = newlimit
-			update_scene_placement()
-		else:
-			limit = 0
-			update_scene_placement()
+	if state != GSRState.SCENE_PLACEMENT:
+		return
+		
+	if limit == 0 || limit != newlimit:
+		limit = newlimit
+			
+		update_scene_placement()
+	else:
+		limit = 0
+		update_scene_placement()
 
+
+func change_scene_plane(newplane):
+	if state != GSRState.SCENE_PLACEMENT || spatial_placement_plane == newplane:
+		return
+	spatial_placement_plane = newplane
+	update_grid_rotation()
+	update_scene_placement()
+		
 
 func change_limit(newlimit):
 	revert_manipulation()
@@ -920,22 +941,20 @@ func plane_from_point(normal, point: Vector3):
 func scene_placement_plane() -> Plane:
 	return plane_from_point(plane_axis(spatialparent, spatial_placement_plane),
 			spatialparent.global_transform.origin + spatial_offset)
-#	var point = spatialparent.global_transform.origin + spatial_offset
-#	var normal = (spatialparent.global_transform.basis.x if spatial_placement_plane == GSRPlane.X else
-#			(spatialparent.global_transform.basis.y if spatial_placement_plane == GSRPlane.Y else 
-#			-spatialparent.global_transform.basis.z))
-#	var plane = Plane(normal, 0.0)
-#	var dir = 1 if plane.is_point_over(point) else -1
-#	return Plane(normal, plane.distance_to(point) * dir)
 
 
 func scene_placement_limited_plane():
-	var plane = plane_from_point(plane_axis(spatialparent, limit), spatialparent.global_transform.origin)
+	#var plane = plane_from_point(plane_axis(spatialparent, limit), spatialparent.global_transform.origin)
+	return plane_from_point(editor_camera.global_transform.basis.z, spatialscene.global_transform.origin)
 
-	#var point = plane.project(spatialscene.global_transform.origin) #spatialparent.global_transform.origin + spatial_offset
 
-	return plane_from_point(editor_camera.global_transform.basis.z,
-			spatialscene.global_transform.origin)
+func vector_exclude_plane(vec: Vector3, plane: int):
+	if plane == GSRPlane.X:
+		return Vector3(0, vec.y, vec.z)
+	if plane == GSRPlane.Y:
+		return Vector3(vec.x, 0, vec.z)
+	if plane == GSRPlane.Z:
+		return Vector3(vec.x, vec.y, 0)
 
 
 func update_scene_placement():
@@ -952,11 +971,15 @@ func update_scene_placement():
 			return
 			
 		point = spatialparent.to_local(point)
-		var place = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, false)), stepify(point.y, tile_step_size(GSRAxis.Y, false)), stepify(point.z, tile_step_size(GSRAxis.XZ, false)))
+		var place = vector_exclude_plane(Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, false)), stepify(point.y, tile_step_size(GSRAxis.Y, false)), stepify(point.z, tile_step_size(GSRAxis.XZ, false))), spatial_placement_plane)
 		if smoothing:
-			spatial_offset = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, smoothing)), stepify(point.y, tile_step_size(GSRAxis.Y, smoothing)), stepify(point.z, tile_step_size(GSRAxis.XZ, smoothing))) - place
-			spatial_offset.x = fmod(spatial_offset.x, tile_step_size(GSRAxis.XZ, false))
-			spatial_offset.z = fmod(spatial_offset.z, tile_step_size(GSRAxis.XZ, false))
+			var smooth_place = vector_exclude_plane(Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, smoothing)), stepify(point.y, tile_step_size(GSRAxis.Y, smoothing)), stepify(point.z, tile_step_size(GSRAxis.XZ, smoothing))) - place, spatial_placement_plane)
+			if spatial_placement_plane != GSRPlane.X:
+				spatial_offset.x = fmod(smooth_place.x, tile_step_size(GSRAxis.XZ, false))
+			if spatial_placement_plane != GSRPlane.Y:
+				spatial_offset.y = fmod(smooth_place.y, tile_step_size(GSRAxis.Y, false))
+			if spatial_placement_plane != GSRPlane.Z:
+				spatial_offset.z = fmod(smooth_place.z, tile_step_size(GSRAxis.XZ, false))
 		if limit == 0:
 			spatialscene.transform.origin = place + spatial_offset
 		elif limit == GSRLimit.X:
@@ -967,7 +990,7 @@ func update_scene_placement():
 			spatialscene.transform.origin.z = (place + spatial_offset).z
 			
 		grid_mesh.visible = true
-		update_grid_position(spatialscene.transform.origin - spatial_offset)
+		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
 	else:
 		var plane = scene_placement_limited_plane() 
 		if plane == null:
@@ -985,14 +1008,17 @@ func update_scene_placement():
 		point = spatialparent.to_local(point)
 		var place = Vector3(stepify(point.x, tile_step_size(GSRAxis.XZ, true)), stepify(point.y, tile_step_size(GSRAxis.Y, true)), stepify(point.z, tile_step_size(GSRAxis.XZ, true)))
 		if limit == GSRLimit.X:
-			spatialscene.transform.origin.x = (place + spatial_offset).x
+			spatial_offset.x = place.x
+			spatialscene.transform.origin.x = place.x #+ spatial_offset.x
 		elif limit == GSRLimit.Y:
-			spatialscene.transform.origin.y = (place + spatial_offset).y
+			spatial_offset.y = place.y
+			spatialscene.transform.origin.y = place.y #+ spatial_offset.y
 		else:
-			spatialscene.transform.origin.z = (place + spatial_offset).z
+			spatial_offset.z = place.z
+			spatialscene.transform.origin.z = place.z #+ spatial_offset.z
 			
 		grid_mesh.visible = true
-		update_grid_position(spatialscene.transform.origin - spatial_offset)
+		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
 
 
 func floor_change_scene_placement(direction: int):
@@ -1393,10 +1419,22 @@ func check_grid():
 	else:
 		grid_mesh.update()
 
+# Rotate spatial placement grid based on placement plane. When rotation is 0, the
+# grid is facing up on the local Y vector.
+func update_grid_rotation():
+	if grid_mesh == null:
+		return
+		
+	if spatial_placement_plane == GSRPlane.Y:
+		grid_mesh.rotation = Vector3.ZERO
+	elif spatial_placement_plane == GSRPlane.Z:
+		grid_mesh.rotation = Vector3(PI / 2, 0.0, 0.0)
+	else:
+		grid_mesh.rotation = Vector3(0.0, 0.0, PI / 2)
+
+
 func update_grid_position(center):
-	grid_mesh.transform.origin = center + Vector3(spatial_offset.x if spatial_placement_plane == GSRPlane.X else 0.0,
-			spatial_offset.y if spatial_placement_plane == GSRPlane.Y else 0.0,
-			spatial_offset.z if spatial_placement_plane == GSRPlane.Z else 0.0)
+	grid_mesh.transform.origin = center
 
 
 func unpack_scene():
