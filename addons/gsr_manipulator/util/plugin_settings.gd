@@ -24,23 +24,17 @@ const UI = preload("./editor_ui.gd")
 signal snap_settings_changed()
 
 
-# Unit size for snapping when grab-moving a node on the x/z axes.
-var grab_snap_size_x := 1.0
-# Unit size for snapping when grab-moving a node on the y axis.
-var grab_snap_size_y := 1.0
-# Number of subdivisions for smoothing when grab-moving a node on the x/z axes. Must be 1 or higher.
-var grab_snap_subd_x := 10
-# Number of subdivisions for smoothing when grab-moving a node on the y axis. Must be 1 or higher.
-var grab_snap_subd_y := 10
-# Whether to use separate x and y snapping.
-var use_y_grab_snap := false
+# Unit size for snapping when moving a node in a grid.
+var grid_size := 1.0
+# Number of subdivisions of each grid section. Must be 1 or higher.
+var grid_subdiv := 10
 
 # Whether the z and y shortcuts are swapped when locking to an axis.
 var zy_swapped = false
 # Whether snap settings are shown in the 3D editor
 var snap_controls_shown = false
 
-# Presets (stored in dictionaries) created for snap and subdivision values.
+# Presets (stored in dictionaries) created for grid snap and subdivision values.
 var snap_presets = []
 # Preset last selected in the settings panel
 var selected_snap_preset = -1
@@ -56,11 +50,8 @@ func load_config():
 		
 	section = config.get("snap")
 	if section != null:
-		grab_snap_size_x = section.get("snap_x", 1.0)
-		grab_snap_subd_x = section.get("subd_x", 10)
-		use_y_grab_snap = section.get("use_y", false)
-		grab_snap_size_y = section.get("snap_y", 1.0)
-		grab_snap_subd_y = section.get("subd_y", 10)
+		grid_size = section.get("grid_size", 1.0)
+		grid_subdiv = section.get("grid_subdiv", 10)
 	
 	section = config.get("snap_presets")
 	var presets = {}
@@ -73,8 +64,7 @@ func load_config():
 				continue
 			var ix = int(key.substr(u_pos + 1))
 			var k = key.substr(0, u_pos)
-			if (k != "name" && k != "snap_x" && k != "subd_x" && k != "use_y"
-					&& k != "snap_y" && k != "subd_y"):
+			if (k != "name" && k != "grid_size" && k != "grid_subdiv"):
 				continue
 			if !presets.has(ix):
 				presets[ix] = {}
@@ -91,17 +81,13 @@ func load_config():
 func save_config():
 	var config = { "settings" : { "z_up" : zy_swapped, "snap_preset" : selected_snap_preset,
 					"snap_controls_shown" : snap_controls_shown },
-			"snap" : { "snap_x" : grab_snap_size_x, "subd_x" : grab_snap_subd_x,
-			"use_y" : use_y_grab_snap, "snap_y" : grab_snap_size_y, "subd_y" : grab_snap_subd_y } }
+			"grid" : { "grid_size" : grid_size, "grid_subdiv" : grid_subdiv } }
 	
 	var presets = {}
 	for ix in snap_presets.size():
 		presets["name_" + str(ix)] = snap_presets[ix].name
-		presets["snap_x_" + str(ix)] = snap_presets[ix].snap_x
-		presets["subd_x_" + str(ix)] = snap_presets[ix].subd_x
-		presets["use_y_" + str(ix)] = snap_presets[ix].use_y
-		presets["snap_y_" + str(ix)] = snap_presets[ix].snap_y
-		presets["subd_y_" + str(ix)] = snap_presets[ix].subd_y
+		presets["grid_size_" + str(ix)] = snap_presets[ix].grid_size
+		presets["grid_subdiv_" + str(ix)] = snap_presets[ix].grid_subdiv
 	
 	if !presets.empty():
 		config["snap_presets"] = presets
@@ -119,10 +105,9 @@ func snap_preset_name(index: int):
 	return snap_presets[index].name	
 
 
-func store_snap_preset(name: String, snap_x: float, subd_x: int, use_y: bool, snap_y: float, subd_y: int) -> int:
+func store_grid_preset(name: String, siz: float, subd: int) -> int:
 	var pos = snap_presets.bsearch_custom(name, self, "_compare_snap_presets", true)
-	var val = { "name" : name, "snap_x" : snap_x, "subd_x" : subd_x,
-			"use_y" : use_y, "snap_y" : snap_y, "subd_y" : subd_y }
+	var val = { "name" : name, "grid_size" : siz, "grid_subdiv" : subd }
 	if snap_presets.size() <= pos:
 		snap_presets.append(val)
 	elif snap_presets[pos].name != name:
@@ -132,28 +117,18 @@ func store_snap_preset(name: String, snap_x: float, subd_x: int, use_y: bool, sn
 	return pos
 
 
-func snap_preset_snap(index: int, y: bool):
+func snap_preset_snap(index: int):
 	if index < 0 || index >= snap_presets.size():
 		return null
-	if y:
-		return snap_presets[index].snap_y
-	return snap_presets[index].snap_x
+	return snap_presets[index].grid_size
 
 
-func snap_preset_subdiv(index: int, y: bool):
+func snap_preset_subdiv(index: int):
 	if index < 0 || index >= snap_presets.size():
 		return null
-	if y:
-		return snap_presets[index].subd_y
-	return snap_presets[index].subd_x
+	return snap_presets[index].grid_subdiv
 
 
-func snap_preset_use_y(index: int):
-	if index < 0 || index >= snap_presets.size():
-		return false
-	return snap_presets[index].use_y
-	
-	
 func _compare_snap_presets(a, b):
 	if (a is String) != (b is String):
 		if a is String:
@@ -172,28 +147,21 @@ func delete_snap_preset(index: int):
 
 func select_snap_preset(index: int):
 	if index < 0 || index >= snap_presets.size():
-		set_snap_values(1.0, 10, false, 1.0, 10)
+		set_snap_values(1.0, 10)
 		return
 		
-	grab_snap_size_x = snap_presets[index].snap_x
-	grab_snap_subd_x = snap_presets[index].subd_x
-	grab_snap_size_y = snap_presets[index].snap_y
-	grab_snap_subd_y = snap_presets[index].subd_y
+	grid_size = snap_presets[index].grid_size
+	grid_subdiv = snap_presets[index].grid_subdiv
 	
-	set_snap_values(snap_presets[index].snap_x, snap_presets[index].subd_x,
-			snap_presets[index].use_y, snap_presets[index].snap_y, snap_presets[index].subd_y)
+	set_snap_values(snap_presets[index].grid_size, snap_presets[index].grid_subdiv)
 
 
-func set_snap_values(snap_x: float, subd_x: int, use_y: bool, snap_y: float, subd_y: int):
-	if (grab_snap_size_x == snap_x && grab_snap_subd_x == subd_x &&
-			(use_y_grab_snap == use_y && (!use_y || (grab_snap_size_y == snap_y && grab_snap_subd_y == subd_y))) ):
+func set_snap_values(siz: float, subd: int):
+	if grid_size == siz && grid_subdiv == subd:
 		return
 	
-	grab_snap_size_x = snap_x
-	grab_snap_subd_x = subd_x
-	grab_snap_size_y = snap_y
-	grab_snap_subd_y = subd_y
-	use_y_grab_snap = use_y
+	grid_size = siz
+	grid_subdiv = subd
 	
 	emit_signal("snap_settings_changed")
 

@@ -3,10 +3,8 @@ extends MeshInstance
 
 var editor: EditorPlugin
 
-var size_xz := 1.0
-var subd_xz := 10
-var size_y := 1.0
-var subd_y := 10
+var size := 1.0
+var subdiv := 10
 
 
 const GRID_SIZE := 20
@@ -27,20 +25,11 @@ func create_material():
 	material_override = mat
 
 func update():
-	if mesh != null && (size_xz == editor.settings.grab_snap_size_x && subd_xz == editor.settings.grab_snap_subd_x &&
-			((!editor.settings.use_y_grab_snap && size_xz == size_y && subd_xz == subd_y) ||
-				(editor.settings.use_y_grab_snap && size_y == editor.settings.grab_snap_size_y &&
-				subd_y == editor.settings.grab_snap_subd_y))):
+	if mesh != null && size == editor.settings.grid_size && subdiv == editor.settings.grid_subdiv:
 		return
 	
-	size_xz = editor.settings.grab_snap_size_x
-	subd_xz = editor.settings.grab_snap_subd_x
-	if !editor.settings.use_y_grab_snap:
-		size_y = size_xz
-		subd_y = subd_xz
-	else:
-		size_y = editor.settings.grab_snap_size_y
-		subd_y = editor.settings.grab_snap_subd_y
+	size = editor.settings.grid_size
+	subdiv = editor.settings.grid_subdiv
 	
 	generate()
 
@@ -53,14 +42,14 @@ func generate():
 	for ix in GRID_SIZE:
 		var pos = ix - half_size
 		
-		lines.append(Vector3((pos + 0.5) * size_xz, 0.0, size_xz * -half_size))
+		lines.append(Vector3((pos + 0.5) * size, 0.0, size * -half_size))
 		colors.append(Color.yellow)
-		lines.append(Vector3((pos + 0.5) * size_xz, 0.0, size_xz * half_size))
+		lines.append(Vector3((pos + 0.5) * size, 0.0, size * half_size))
 		colors.append(Color.yellow)
 		
-		lines.append(Vector3(size_xz * -half_size, 0.0, (pos + 0.5) * size_xz))
+		lines.append(Vector3(size * -half_size, 0.0, (pos + 0.5) * size))
 		colors.append(Color.yellow)
-		lines.append(Vector3(size_xz * half_size, 0.0, (pos + 0.5) * size_xz))
+		lines.append(Vector3(size * half_size, 0.0, (pos + 0.5) * size))
 		colors.append(Color.yellow)
 
 	var arrays = []
