@@ -48,7 +48,7 @@ func load_config():
 		snap_controls_shown = section.get("snap_controls_shown", false)
 		selected_snap_preset = section.get("snap_preset", false)
 		
-	section = config.get("snap")
+	section = config.get("grid")
 	if section != null:
 		grid_size = section.get("grid_size", 1.0)
 		grid_subdiv = section.get("grid_subdiv", 10)
