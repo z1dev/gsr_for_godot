@@ -551,7 +551,6 @@ func current_camera_position(event: InputEventMouseMotion, camera: Camera) -> Ve
 	if camera == editor_camera || editor_camera == null:
 		return event.position
 	return editor_camera.get_parent().get_parent().get_local_mouse_position()
-	
 
 
 func forward_spatial_draw_over_viewport(overlay):
@@ -664,7 +663,6 @@ func forward_spatial_draw_over_viewport(overlay):
 			elif limit & GSRLimit.Z:
 				draw_axis(overlay, GSRLimit.X, start_global_transform[ix])
 				draw_axis(overlay, GSRLimit.Y, start_global_transform[ix])
-			
 
 
 func draw_axis(control: Control, which, gtrans = null):
@@ -746,7 +744,7 @@ func get_intersection(l1_start: Vector2, l1_normal: Vector2, l2_start: Vector2, 
 		return Vector2(l1_start.x + (l2_start.y - l1_start.y) * a, l2_start.y)
 	
 	return Vector2.ZERO
-	
+
 
 func inside_viewrect(viewsize: Vector2, pt: Vector2):
 	return pt.x >= -0.001 && pt.y >= -0.001 && pt.x <= viewsize.x + 0.001 && pt.y <= viewsize.y + 0.001
@@ -767,6 +765,7 @@ func get_placement_scene(path) -> PackedScene:
 	if !ClassDB.class_exists(sstate.get_node_type(0)) && ClassDB.is_parent_class(sstate.get_node_type(0), "Spatial"):
 		return null
 	return ps
+
 
 func start_scene_placement(camera: Camera):
 	if state != GSRState.NONE:
@@ -923,7 +922,7 @@ func change_scene_limit(newlimit):
 	else:
 		limit = 0
 		update_scene_placement()
-		
+
 
 func cancel_scene_limit():
 	if state != GSRState.SCENE_PLACE && state != GSRState.SCENE_MOVE:
@@ -944,7 +943,7 @@ func change_scene_plane(newplane):
 	if newplane != GSRAxis.X:
 		spatial_offset.x = fmod(spatial_offset.x, tile_step_size(false))
 	if newplane != GSRAxis.Y:
-		spatial_offset.y = fmod(spatial_offset.y, tile_step_size( false))
+		spatial_offset.y = fmod(spatial_offset.y, tile_step_size(false))
 	if newplane != GSRAxis.Z:
 		spatial_offset.z = fmod(spatial_offset.z, tile_step_size(false))
 		
@@ -1078,6 +1077,13 @@ func update_scene_placement():
 			return
 			
 		point = spatialparent.to_local(point)
+		if !smoothing:
+			if spatial_placement_plane != GSRAxis.X:
+				point.x -= spatial_offset.x
+			if spatial_placement_plane != GSRAxis.Y:
+				point.y -= spatial_offset.y
+			if spatial_placement_plane != GSRAxis.Z:
+				point.z -= spatial_offset.z
 		# Coordinates on placement plane based on mouse position, snapped to a grid point.
 		var place = vector_exclude_plane(Vector3(stepify(point.x, tile_step_size(false)),
 				stepify(point.y, tile_step_size(false)),
