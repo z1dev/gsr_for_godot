@@ -451,20 +451,23 @@ func forward_spatial_gui_input(camera, event):
 			cancel_all()
 			return true
 		elif state == GSRState.SCENE_PLACE || state == GSRState.SCENE_MOVE:
-			if char(event.unicode) == 'x' || char(event.unicode) == 'X':
-				change_scene_limit(GSRLimit.X)
-			elif event.scancode == KEY_1:
-				change_scene_plane(GSRAxis.X)
+			if (char(event.unicode) == 'x' || char(event.unicode) == 'X'):
+				if spatial_placement_plane == GSRAxis.X:
+					change_scene_limit(GSRLimit.X)
+				else:
+					change_scene_plane(GSRAxis.X)
 			elif ((!settings.zy_swapped && (char(event.unicode) == 'y' || char(event.unicode) == 'Y')) ||
 					(settings.zy_swapped && (char(event.unicode) == 'z' || char(event.unicode) == 'Z'))):
-				change_scene_limit(GSRLimit.Y)
-			elif (!settings.zy_swapped && event.scancode == KEY_3) || (settings.zy_swapped && event.scancode == KEY_2):
-				change_scene_plane(GSRAxis.Y)
+				if spatial_placement_plane == GSRAxis.Y:
+					change_scene_limit(GSRLimit.Y)
+				else:
+					change_scene_plane(GSRAxis.Y)
 			elif ((!settings.zy_swapped && (char(event.unicode) == 'z' || char(event.unicode) == 'Z')) ||
 					(settings.zy_swapped && (char(event.unicode) == 'y' || char(event.unicode) == 'Y'))):
-				change_scene_limit(GSRLimit.Z)
-			elif (!settings.zy_swapped && event.scancode == KEY_2) || (settings.zy_swapped && event.scancode == KEY_3):
-				change_scene_plane(GSRAxis.Z)
+				if spatial_placement_plane == GSRAxis.Z:
+					change_scene_limit(GSRLimit.Z)
+				else:
+					change_scene_plane(GSRAxis.Z)
 			return true
 		elif state != GSRState.NONE:
 			var newlimit = 0
@@ -560,7 +563,7 @@ func forward_spatial_draw_over_viewport(overlay):
 		
 	if state == GSRState.NONE:
 		return
-	
+		
 	var f = overlay.get_font("font")
 	var text: String
 	
@@ -618,6 +621,8 @@ func forward_spatial_draw_over_viewport(overlay):
 		text += "  Cell x: %s%d.%d  y: %s%d.%d  z: %s%d.%d" % [prefx, int(cell.x), step.x,
 				prefy, int(cell.y), step.y,
 				prefz, int(cell.z), step.z]
+		selection_centerpos = editor_camera.unproject_position(selection_center)
+				
 		
 	overlay.draw_string(f, Vector2(16, 57), text, Color(0, 0, 0, 1))
 	overlay.draw_string(f, Vector2(15, 56), text)
@@ -1137,6 +1142,9 @@ func update_scene_placement():
 			
 		grid_mesh.visible = true
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
+		
+	selection_center = spatialscene.global_transform.origin
+	selection_centerpos = editor_camera.unproject_position(selection_center)
 	update_overlays()
 
 
