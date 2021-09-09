@@ -7,7 +7,7 @@ var size := 1.0
 var subdiv := 10
 
 
-const GRID_SIZE := 20
+const GRID_SIZE := 100
 
 
 func _init(e):
