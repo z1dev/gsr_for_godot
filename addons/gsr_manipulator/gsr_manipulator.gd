@@ -24,6 +24,9 @@ const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
 const GridMesh = preload("./mesh/grid_mesh.gd")
 
+
+const TINY_VALE = 0.0001
+
 # Separate script for stuff that needs to persist
 var settings: PluginSettings = PluginSettings.new()
 
@@ -426,7 +429,7 @@ func forward_spatial_gui_input(camera, event):
 			start_manipulation(camera, GSRState.GRAB)
 			saved_mousepos = mousepos
 			return true
-		if selected && char(event.unicode) == 'G' && event.shift:
+		if selected && char(event.unicode) == 'm':
 			if state == GSRState.GRAB || state == GSRState.SCENE_PLACE || state == GSRState.SCENE_MOVE:
 				return false
 			start_scene_manipulation(camera)
@@ -556,7 +559,7 @@ func forward_spatial_draw_over_viewport(overlay):
 	if !is_instance_valid(editor_camera) || overlay.get_parent().get_child(0).get_child(0).get_child(0) != editor_camera:
 		return
 		
-	if state == GSRState.NONE || state == GSRState.SCENE_PLACE || state == GSRState.SCENE_MOVE:
+	if state == GSRState.NONE:
 		return
 	
 	var f = overlay.get_font("font")
@@ -568,6 +571,10 @@ func forward_spatial_draw_over_viewport(overlay):
 		text = "[Rotate]"
 	elif state == GSRState.SCALE:
 		text = "[Scale]"
+	elif state == GSRState.SCENE_PLACE:
+		text = "[Grid Add]"
+	elif state == GSRState.SCENE_MOVE:
+		text = "[Grid Move]"
 	
 	if limit == GSRLimit.X:
 		text += " X axis"
@@ -591,17 +598,32 @@ func forward_spatial_draw_over_viewport(overlay):
 		for ix in selection.size():
 			center += selection[ix].global_transform.origin
 		center /= selection.size()
-		var dist = selection_center - center
+		var dist = center - selection_center
 		text += "  Distance: %.4f  Dx: %.4f  Dy: %.4f  Dz: %.4f" % [dist.length(), dist.x, dist.y, dist.z]
 	elif state == GSRState.ROTATE:
 		text += "  Deg: %.2f°" % [rotate_display]
 	elif state == GSRState.SCALE:
 		text += "  Scale: %.2f%%  Sx: %.4f  Sy: %.4f  Sz: %.4f" % [scale_display, scale_axis_display.x, scale_axis_display.y, scale_axis_display.z]
+	elif state == GSRState.SCENE_PLACE || state == GSRState.SCENE_MOVE:
+		text += "  Coords: (%.2f, %.2f, %.2f)" % [spatialscene.transform.origin.x, spatialscene.transform.origin.y, spatialscene.transform.origin.z]
+		var cell = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALE) / settings.grid_size),
+				int(floor((abs(spatialscene.transform.origin.y) + TINY_VALE) / settings.grid_size)),
+				int(floor((abs(spatialscene.transform.origin.z) + TINY_VALE) / settings.grid_size)))
+		var stepsize = settings.grid_size / settings.grid_subdiv
+		var step = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALE - cell.x * settings.grid_size) / stepsize),
+				int((abs(spatialscene.transform.origin.y) + TINY_VALE - cell.y * settings.grid_size) / stepsize),
+				int((abs(spatialscene.transform.origin.z) + TINY_VALE - cell.z * settings.grid_size) / stepsize))
+		var prefx = "-" if spatialscene.transform.origin.x < 0 else ""
+		var prefy = "-" if spatialscene.transform.origin.y < 0 else ""
+		var prefz = "-" if spatialscene.transform.origin.z < 0 else ""
+		text += "  Cell x: %s%d.%d  y: %s%d.%d  z: %s%d.%d" % [prefx, int(cell.x), step.x,
+				prefy, int(cell.y), step.y,
+				prefz, int(cell.z), step.z]
 		
 	overlay.draw_string(f, Vector2(16, 57), text, Color(0, 0, 0, 1))
 	overlay.draw_string(f, Vector2(15, 56), text)
 	
-	if state != GSRState.GRAB:
+	if state == GSRState.SCALE || state == GSRState.ROTATE:
 		draw_line_dotted(overlay, mousepos + Vector2(0.5, 0.5), 
 				selection_centerpos + Vector2(0.5, 0.5), 4.0, 4.0, Color.black, 1.0, true)
 		draw_line_dotted(overlay, mousepos, selection_centerpos, 4.0, 4.0, Color.white, 1.0, true)
@@ -1109,6 +1131,7 @@ func update_scene_placement():
 			
 		grid_mesh.visible = true
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
+	update_overlays()
 
 
 func finalize_scene_placement():

@@ -72,7 +72,7 @@ func load_config():
 	
 	snap_presets = []
 	for key in presets.keys():
-		if presets[key].size() != 6:
+		if presets[key].size() != 3:
 			continue
 		snap_presets.append(presets[key])
 	snap_presets.sort_custom(self, "_compare_snap_presets")
