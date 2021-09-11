@@ -42,7 +42,9 @@ enum GSRAxis {X = 1, Y = 2, Z = 4}
 var selected := false
 # Saved objects for hiding their gizmos.
 var selected_objects: WeakRef = weakref(null)
-
+# When set, the transform used to limit manipulation to an axis, instead of using the global axis
+# for rotation or scale axis.
+var limit_transform = null
 
 # Manipulation method used from GSRAction values. Doesn't necessarily match the active method.
 var action: int = GSRAction.NONE
@@ -699,9 +701,17 @@ func draw_axis(control: Control, which, gtrans = null):
 	
 	var global_axis = (!local || gtrans == null) || (get_current_action() == GSRAction.ROTATE && local && (limit & GSRLimit.REVERSE))
 	
-	var left = Vector3.LEFT if global_axis else gtrans.basis.x.normalized()
-	var up = Vector3.UP if global_axis else gtrans.basis.y.normalized()
-	var forward = Vector3.FORWARD if global_axis else gtrans.basis.z.normalized()
+	var left: Vector3 = Vector3.LEFT
+	var up: Vector3 = Vector3.UP
+	var forward: Vector3 = Vector3.FORWARD
+	if !global_axis:
+		left = gtrans.basis.x.normalized()
+		up = gtrans.basis.y.normalized()
+		forward = gtrans.basis.z.normalized()
+	elif limit_transform != null:
+		left = limit_transform.basis.x.normalized()
+		up = limit_transform.basis.y.normalized()
+		forward = limit_transform.basis.z.normalized()
 	
 	var xaxis = (centerpos - editor_camera.unproject_position(center + left * 10000.0)).normalized()
 	var yaxis = (centerpos - editor_camera.unproject_position(center + up * 10000.0)).normalized()
@@ -870,6 +880,7 @@ func change_scene_manipulation(newaction):
 		return
 		
 	var dummy = [spatialscene]
+	limit_transform = spatialparent.global_transform
 	initialize_manipulation(dummy)
 
 
@@ -955,7 +966,7 @@ func change_scene_limit(newlimit):
 #			cancel_scene_limit()
 		saved_offset = vector_component(spatial_offset, newlimit)
 		limit = newlimit
-			
+		limit_transform = spatialparent.global_transform
 		update_scene_placement()
 	else:
 		limit = 0
@@ -1408,6 +1419,16 @@ func apply_manipulation():
 
 
 func get_limit_axis_vector(index: int) -> Vector3:
+	if !local && limit_transform != null:
+		if (limit & GSRLimit.X):
+			return limit_transform.basis.x.normalized()
+		elif (limit & GSRLimit.Y):
+			return limit_transform.basis.y.normalized()
+		elif (limit & GSRLimit.Z):
+			return limit_transform.basis.z.normalized()
+		return Vector3.ZERO
+		
+	
 	if (limit & GSRLimit.X):
 		return Vector3(1.0, 0.0, 0.0) if !local else selection[index].global_transform.basis.x.normalized()
 	elif (limit & GSRLimit.Y):
@@ -1426,6 +1447,15 @@ func get_grab_offset_for_axis(offset: Vector3, axisvec: Vector3) -> Vector3:
 	
 
 func get_scale_limit_vector(basisx: Vector3, basisy: Vector3, basisz: Vector3) -> Vector3:
+	if !local && limit_transform != null:
+		if (limit & GSRLimit.X):
+			return limit_transform.basis.x.normalized()
+		elif (limit & GSRLimit.Y):
+			return limit_transform.basis.y.normalized()
+		elif (limit & GSRLimit.Z):
+			return limit_transform.basis.z.normalized()
+		return Vector3.ZERO
+	
 	if (limit & GSRLimit.X):
 		return Vector3(1.0, 0.0, 0.0) if !local else basisx
 	if (limit & GSRLimit.Y):
@@ -1487,7 +1517,7 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 			v1 = selection[index].global_transform.basis.x #- selection[index].global_transform.origin
 			v2 = selection[index].global_transform.basis.y #- selection[index].global_transform.origin
 	return [v1.normalized(), v2.normalized()]
-	
+
 
 # Cancels ongoing manipulation and grid snapping action, restoring old transform of involved
 # spatials. If full_cancel is false and a spatial is being rotated/scaled inside the grid, only
@@ -1529,6 +1559,8 @@ func reset(full_reset = true):
 		action = GSRAction.NONE
 	
 		grid_start_transform = null
+		
+		limit_transform = null
 		
 		spatialscene = null
 		spatialparent = null
@@ -1597,6 +1629,7 @@ func check_grid():
 		generate_grid_mesh()
 	else:
 		grid_mesh.update()
+
 
 # Rotate spatial placement grid based on placement plane. When rotation is 0, the
 # grid is facing up on the local Y vector.
