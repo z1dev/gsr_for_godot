@@ -23,6 +23,7 @@ const FS = preload("./util/file_system.gd")
 const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
 const GridMesh = preload("./mesh/grid_mesh.gd")
+const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 
 const TINY_VALE = 0.0001
@@ -144,6 +145,7 @@ var saved_offset: float
 var spatial_placement_plane: int = GSRAxis.Y
 
 var grid_mesh = null
+var cross_mesh = null
 
 
 func _enter_tree():
@@ -152,7 +154,7 @@ func _enter_tree():
 	add_toolbuttons()
 	add_control_dock()
 	register_callbacks(true)
-	generate_grid_mesh()
+	generate_meshes()
 
 
 func _exit_tree():
@@ -164,7 +166,7 @@ func _exit_tree():
 	reset()
 	selected_objects = weakref(null)
 	remove_control_dock()
-	free_grid_mesh()
+	free_meshes()
 
 
 func add_control_dock():
@@ -833,6 +835,8 @@ func start_scene_placement(camera: Camera):
 	
 	if grid_mesh != null:
 		spatialparent.add_child(grid_mesh)
+		spatialparent.add_child(cross_mesh)
+		
 	#spatialscene.rotate_y(spatial_rotation)
 	
 	hide_gizmo()
@@ -858,6 +862,7 @@ func start_scene_manipulation(camera: Camera):
 	
 	if grid_mesh != null:
 		spatialparent.add_child(grid_mesh)
+		spatialparent.add_child(cross_mesh)
 	
 	spatial_offset.x = fmod(spatialscene.transform.origin.x, tile_step_size(false))
 	spatial_offset.y = fmod(spatialscene.transform.origin.y, tile_step_size(false))
@@ -1123,6 +1128,7 @@ func update_scene_placement():
 		if point == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
+				cross_mesh.visible = false
 			return
 			
 		point = spatialparent.to_local(point)
@@ -1157,12 +1163,15 @@ func update_scene_placement():
 			spatialscene.transform.origin.z = (place + spatial_offset).z
 			
 		grid_mesh.visible = true
+		cross_mesh.visible = true
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
+		update_cross_position()
 	else:
 		var plane = scene_placement_limited_plane() 
 		if plane == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
+				cross_mesh.visible = false
 			return
 			
 		var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos),
@@ -1170,6 +1179,7 @@ func update_scene_placement():
 		if point == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
+				cross_mesh.visible = false
 			return
 		
 		point = spatialparent.to_local(point)
@@ -1185,6 +1195,7 @@ func update_scene_placement():
 			spatialscene.transform.origin.z = place.z
 			
 		grid_mesh.visible = true
+		cross_mesh.visible = true
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
 		
 	selection_center = spatialscene.global_transform.origin
@@ -1259,6 +1270,8 @@ func reset_scene_action():
 			spatialscene.transform = grid_start_transform
 	if grid_mesh != null && grid_mesh.get_parent() != null:
 		grid_mesh.get_parent().remove_child(grid_mesh)
+	if cross_mesh != null && cross_mesh.get_parent() != null:
+		cross_mesh.get_parent().remove_child(cross_mesh)
 
 
 func apply_manipulation():
@@ -1615,20 +1628,24 @@ func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector
 	obj.global_transform.origin = (obj.global_transform.origin - center) * pos_scale + center
 
 
-func generate_grid_mesh():
+func generate_meshes():
 	grid_mesh = GridMesh.new(self)
+	cross_mesh = CrossMesh.new(self)
 
 
-func free_grid_mesh():
+func free_meshes():
 	grid_mesh.free()
 	grid_mesh = null
+	cross_mesh.free()
+	cross_mesh = null
 
 
 func check_grid():
 	if grid_mesh == null:
-		generate_grid_mesh()
+		generate_meshes()
 	else:
 		grid_mesh.update()
+		cross_mesh.update()
 
 
 # Rotate spatial placement grid based on placement plane. When rotation is 0, the
@@ -1647,6 +1664,11 @@ func update_grid_rotation():
 
 func update_grid_position(center):
 	grid_mesh.transform.origin = center
+
+
+func update_cross_position():
+	cross_mesh.transform.origin = spatialscene.transform.origin
+	cross_mesh.rotation = spatialscene.rotation
 
 
 func unpack_scene():
