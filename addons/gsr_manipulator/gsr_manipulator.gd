@@ -115,6 +115,10 @@ var gizmohidden = false
 # Used when hiding gizmos so their original size can be restored.
 var saved_gizmo_size
 
+var undoredo_disabled = false
+var hadundo = false
+var hadredo = false
+
 
 # Button added to toolbar for settings like the z key toggle.
 var menu_button: MenuButton
@@ -314,6 +318,7 @@ func make_visible(visible):
 	selected = visible
 	if !visible:
 		show_gizmo()
+		enable_undoredo()
 	cancel_manipulation()
 
 
@@ -384,7 +389,25 @@ func show_gizmo():
 
 	UI.set_setting(self, "editors/3d/manipulator_gizmo_size", saved_gizmo_size)
 	saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
-	
+
+
+func disable_undoredo():
+	if undoredo_disabled:
+		return
+	hadundo = UI.is_undo_enabled(self)
+	hadredo = UI.is_redo_enabled(self)
+	UI.disable_undoredo(self, hadundo, hadredo)
+	undoredo_disabled = true
+	print("undo disabled")
+
+
+func enable_undoredo():
+	if !undoredo_disabled:
+		return
+	UI.enable_undoredo(self, hadundo, hadredo)
+	undoredo_disabled = false
+	print("redo disabled")
+
 
 func draw_line_dotted(control: CanvasItem, from: Vector2, to: Vector2, dot_len: float, space_len: float, color: Color, width: float = 1.0, antialiased: bool = false):
 	var normal := (to - from).normalized()
@@ -832,6 +855,7 @@ func start_scene_placement(camera: Camera):
 	#spatialscene.rotate_y(spatial_rotation)
 	
 	hide_gizmo()
+	disable_undoredo()
 	update_scene_placement()
 
 
@@ -863,6 +887,7 @@ func start_scene_manipulation(camera: Camera):
 	grid_start_transform = spatialscene.transform
 	
 	hide_gizmo()
+	disable_undoredo()
 	update_scene_placement()
 
 
@@ -904,6 +929,7 @@ func start_manipulation(camera: Camera, newaction):
 		reset()
 	else:
 		hide_gizmo()
+		disable_undoredo()
 		initialize_manipulation(spatials)
 
 
@@ -1204,6 +1230,7 @@ func finalize_scene_placement():
 	var transform = spatialscene.transform
 	reset_scene_action()
 	
+	enable_undoredo()
 	var ur = get_undo_redo()
 	
 	if action == GSRAction.SCENE_PLACE:
@@ -1252,6 +1279,7 @@ func revert_manipulation():
 	
 	for ix in selection.size():
 		selection[ix].transform = start_transform[ix]
+	UI.disable_undoredo(self, hadundo, hadredo)
 
 
 func reset_scene_action():
@@ -1548,6 +1576,7 @@ func finalize_manipulation():
 			selection_final_state.append(s.global_transform)
 		revert_manipulation()
 		
+		enable_undoredo()
 		var ur = get_undo_redo()
 		ur.create_action("GSR Action")
 		for ix in selection.size():
@@ -1574,6 +1603,7 @@ func reset(full_reset = true):
 		snap_toggle = false
 		
 		show_gizmo()
+		enable_undoredo()
 		
 		editor_camera = null
 
@@ -1597,6 +1627,7 @@ func reset(full_reset = true):
 
 func offset_object(index: int, movedby: Vector3):
 	selection[index].global_transform.origin += movedby
+	UI.disable_undoredo(self, hadundo, hadredo)
 
 
 func rotate_object(index: int, angle: float, center: Vector3, axis: Vector3, in_place: bool):
@@ -1612,6 +1643,7 @@ func rotate_object(index: int, angle: float, center: Vector3, axis: Vector3, in_
 	
 	if !in_place:
 		obj.global_transform.origin = displaced + center
+	UI.disable_undoredo(self, hadundo, hadredo)
 
 
 func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector3, in_place: bool):
@@ -1619,6 +1651,7 @@ func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector
 	obj.scale = Vector3(obj.transform.basis.x.length() * scale.x, obj.transform.basis.y.length() * scale.y, obj.transform.basis.z.length() * scale.z)
 	
 	obj.global_transform.origin = (obj.global_transform.origin - center) * pos_scale + center
+	UI.disable_undoredo(self, hadundo, hadredo)
 
 
 func generate_meshes():

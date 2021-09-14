@@ -39,15 +39,28 @@ static func find_child(control: Node, childclass: String, index: int = 0):
 	return null
 
 
-static func get_menu_bar(editor: EditorPlugin):
+static func get_top_bar(editor: EditorPlugin):
 	var ei = editor.get_editor_interface()
 	return find_child(find_child(ei.get_base_control(), "VBoxContainer"), "HBoxContainer")
 
 
+static func get_menu_bar(editor: EditorPlugin):
+	return find_child(get_top_bar(editor), "HBoxContainer")
+
+
+const MENU_SCENE = 0
+const MENU_PROJECT = 1
+const MENU_DEBUG = 2
+const MENU_EDITOR = 3
+const MENU_HELP = 4
+
+static func get_menu(editor: EditorPlugin, index) -> PopupMenu:
+	return find_child(find_child(get_menu_bar(editor), "MenuButton", index), "PopupMenu") as PopupMenu
+
 static func current_main_screen(editor: EditorPlugin):
 	var ei = editor.get_editor_interface()
 	
-	var menubar = get_menu_bar(editor)
+	var menubar = get_top_bar(editor)
 	
 	var button_container = null
 	var ix = 0
@@ -174,4 +187,62 @@ static func save_config(filename, data):
 				continue
 			config.set_value(key, key2, data[key][key2])
 	config.save(filename)
+
+
+static func is_undo_enabled(editor: EditorPlugin):
+	var menu := get_menu(editor, MENU_SCENE)
+	for ix in menu.get_item_count():
+		if menu.get_item_text(ix) == "Undo":
+			return !menu.is_item_disabled(ix)
+	if menu.get_item_count() > 16:
+		return !menu.is_item_disabled(16)
+	return false
+
+
+static func is_redo_enabled(editor: EditorPlugin):
+	var menu = get_menu(editor, MENU_SCENE)
+	for ix in menu.get_item_count():
+		if menu.get_item_text(ix) == "Redo":
+			return !menu.is_item_disabled(ix)
+	if menu.get_item_count() > 17:
+		return !menu.is_item_disabled(17)
+	return false
+
+
+static func disable_undoredo(editor: EditorPlugin, undo: bool, redo: bool):
+	var menu = get_menu(editor, MENU_SCENE)
+	if undo:
+		for ix in menu.get_item_count():
+			if menu.get_item_text(ix) == "Undo":
+				menu.set_item_disabled(ix, true)
+				undo = false
+				break
+		if undo && menu.get_item_count() > 16:
+			menu.set_item_disabled(16, true)
+	if redo:
+		for ix in menu.get_item_count():
+			if menu.get_item_text(ix) == "Redo":
+				menu.set_item_disabled(ix, true)
+				return
+		if menu.get_item_count() > 17:
+			menu.set_item_disabled(17, true)
+
+
+static func enable_undoredo(editor: EditorPlugin, undo: bool, redo: bool):
+	var menu = get_menu(editor, MENU_SCENE)
+	if undo:
+		for ix in menu.get_item_count():
+			if menu.get_item_text(ix) == "Undo":
+				menu.set_item_disabled(ix, false)
+				undo = false
+				break
+		if undo && menu.get_item_count() > 16:
+			menu.set_item_disabled(16, false)
+	if redo:
+		for ix in menu.get_item_count():
+			if menu.get_item_text(ix) == "Redo":
+				menu.set_item_disabled(ix, false)
+				return
+		if menu.get_item_count() > 17:
+			menu.set_item_disabled(17, false)
 
