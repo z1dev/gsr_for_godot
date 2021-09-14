@@ -534,14 +534,6 @@ func forward_spatial_gui_input(camera, event):
 				else:
 					finalize_manipulation()
 				return true
-#			elif snap_toggle && state == GSRAction.SCENE_PLACE && (event.button_index == BUTTON_WHEEL_UP ||
-#					event.button_index == BUTTON_WHEEL_DOWN):
-#				if event.is_pressed():
-#					var dir = 1.0 if event.button_index == BUTTON_WHEEL_UP else -1.0
-#					var amount = 15.0 if !smoothing else 5.0
-#					spatial_rotation += dir * PI / 180.0 * amount
-#					spatialscene.rotate_y(dir * PI / 180.0 * amount)
-#				return true
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
 		if action == GSRAction.NONE:
@@ -1099,7 +1091,8 @@ func plane_from_point(normal, point: Vector3):
 
 func scene_placement_plane() -> Plane:
 	return plane_from_point(plane_axis(spatialparent, spatial_placement_plane),
-			spatialparent.global_transform.origin + spatial_offset)
+			#spatialparent.global_transform.origin + 
+			spatialparent.to_global(spatial_offset))
 
 
 func scene_placement_limited_plane():
