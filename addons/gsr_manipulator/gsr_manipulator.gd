@@ -19,6 +19,7 @@ tool
 extends EditorPlugin
 
 const UI = preload("./editor_ui.gd")
+const Interop = preload("./interop.gd")
 
 # Current manipulation of objects
 enum GSRState { NONE, GRAB, ROTATE, SCALE }
@@ -96,13 +97,18 @@ var saved_gizmo_size
 # Button added to toolbar to make the z key toggle the vertical axis like in Blender.
 var toolbutton_z_up: ToolButton
 
+# Interop node
+var interop = null
 
 func _enter_tree():
+	interop = Interop.get_instance(self, "res://addons/gsr_manipulator/interop_node.gd")
+	interop.register("gsr", self)
 	add_toolbuttons()
 	register_callbacks(true)
 
 
 func _exit_tree():
+	interop.deregister("gsr", self)
 	UI.save_config({ "settings" : { "z_up" : zy_swapped } })
 	register_callbacks(false)
 	remove_toolbuttons()
@@ -530,6 +536,7 @@ func inside_viewrect(viewsize: Vector2, pt: Vector2):
 
 
 func start_manipulation(camera: Camera, newstate):
+	interop.start_work("gsr_transform")
 	
 	if state != GSRState.NONE:
 		cancel_manipulation()
@@ -917,6 +924,7 @@ func reset():
 
 	mousepos_offset = Vector2.ZERO
 	reference_mousepos = Vector2.ZERO
+	interop.end_work("gsr_transform")
 
 
 func offset_object(index: int, movedby: Vector3):
