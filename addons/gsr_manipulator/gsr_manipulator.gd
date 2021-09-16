@@ -96,6 +96,8 @@ var saved_gizmo_size
 # Button added to toolbar to make the z key toggle the vertical axis like in Blender.
 var toolbutton_z_up: ToolButton
 
+# Track mouse pressed to disallow switching modes mid click
+var is_mouse_button_pressed := {}
 
 func _enter_tree():
 	add_toolbuttons()
@@ -177,6 +179,11 @@ func make_visible(visible):
 		show_gizmo()
 	cancel_manipulation()
 
+func is_mouse_pressed():
+	for b in is_mouse_button_pressed:
+		if is_mouse_button_pressed[b]:
+			return true
+	return false
 
 # Whether the button to use local space by default is pressed. After I figured it
 # out how to find it.
@@ -267,6 +274,8 @@ func forward_spatial_gui_input(camera, event):
 		
 	var handled = false
 	if event is InputEventKey:
+		if is_mouse_pressed():
+			return false
 		if event.echo:
 			return false
 			
@@ -323,6 +332,7 @@ func forward_spatial_gui_input(camera, event):
 				handled = true
 	
 	elif event is InputEventMouseButton:
+		is_mouse_button_pressed[event.button_index] = event.pressed
 		if state != GSRState.NONE && event.button_index == BUTTON_RIGHT:
 			cancel_manipulation()
 			handled = true
