@@ -43,7 +43,7 @@ func generate():
 	var colors = PoolColorArray()
 	
 	var gridcolor = Color(0.8, 0.8, 0.4, 0.6)
-	var subdivcolor = Color(0.8, 0.8, 0.4, 0.2)
+	var subdivcolor = Color(0.8, 0.8, 0.4, 0.1)
 	
 	var half_size = GRID_SIZE / 2
 	for ix in GRID_SIZE:

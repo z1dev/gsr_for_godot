@@ -41,8 +41,10 @@ enum GSRAxis {X = 1, Y = 2, Z = 4}
 
 # Objects manipulated by this plugin are selected.
 var selected := false
-# Saved objects for hiding their gizmos.
-var selected_objects: WeakRef = weakref(null)
+
+## Saved objects for hiding their gizmos.
+#var selected_objects: WeakRef = weakref(null)
+
 # When set, the transform used to limit manipulation to an axis, instead of using the global axis
 # for rotation or scale axis.
 var limit_transform = null
@@ -168,7 +170,7 @@ func _exit_tree():
 	remove_toolbuttons()
 	# Make sure we don't hold a reference of anything
 	reset()
-	selected_objects = weakref(null)
+#	selected_objects = weakref(null)
 	remove_control_dock()
 	free_meshes()
 
@@ -302,10 +304,10 @@ func handles(object):
 		var nodes = es.get_transformable_selected_nodes()
 		for n in nodes:
 			if n is Spatial:
-				selected_objects = weakref(object)
+#				selected_objects = weakref(object)
 				return true
 		if object is Spatial:
-			selected_objects = weakref(object)
+#			selected_objects = weakref(object)
 			return true
 
 	return object == null
@@ -398,7 +400,7 @@ func disable_undoredo():
 	hadredo = UI.is_redo_enabled(self)
 	UI.disable_undoredo(self, hadundo, hadredo)
 	undoredo_disabled = true
-	print("undo disabled")
+	#print("undo disabled")
 
 
 func enable_undoredo():
@@ -406,7 +408,7 @@ func enable_undoredo():
 		return
 	UI.enable_undoredo(self, hadundo, hadredo)
 	undoredo_disabled = false
-	print("redo disabled")
+	#print("redo disabled")
 
 
 func draw_line_dotted(control: CanvasItem, from: Vector2, to: Vector2, dot_len: float, space_len: float, color: Color, width: float = 1.0, antialiased: bool = false):
@@ -485,6 +487,10 @@ func forward_spatial_gui_input(camera, event):
 			return true
 		elif !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]) && char(event.unicode) == 'a':
 			start_scene_placement(camera)
+			saved_mousepos = mousepos
+			return true
+		elif !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]) && char(event.unicode) == 'd':
+			start_duplicate_placement(camera)
 			saved_mousepos = mousepos
 			return true
 		elif event.scancode == KEY_ESCAPE:
@@ -811,39 +817,77 @@ func get_placement_scene(path) -> PackedScene:
 	return ps
 
 
-func start_scene_placement(camera: Camera):
+func start_duplicate_placement(camera: Camera):
+	var ei = get_editor_interface()
+	var es = ei.get_selection()
+	
+	var objects = es.get_transformable_selected_nodes()
+	if (objects == null || objects.empty() || objects.size() > 1 || !(objects[0] is Spatial) ||
+			objects[0].filename.empty() || objects[0].get_parent() == null ||
+			!(objects[0].get_parent() is Spatial)):
+		return
+	
 	if action != GSRAction.NONE:
 		cancel_manipulation()
 	
-	# Get the selected scene in the file system that can be instanced.
-	spatial_file_path = UI.fs_selected_path(self)
-	if spatial_file_path.empty():
-		return
+	spatial_file_path = objects[0].filename
 	
-	var ps := get_placement_scene(spatial_file_path)
-	if ps == null:
+	initialize_scene_placement(camera, objects[0].filename, objects[0].get_parent())
+	if spatialscene != null:
+		spatial_offset = (vmod(vector_exclude_plane(objects[0].transform.origin, spatial_placement_plane), tile_step_size(false)) +
+				vector_plane(objects[0].transform.origin, spatial_placement_plane))
+		spatialscene.transform = objects[0].transform
+		update_scene_placement()
+		
+
+func start_scene_placement(camera: Camera):
+	# Get the selected scene in the file system that can be instanced.
+	var path = UI.fs_selected_path(self)
+	if path.empty():
 		return
 	
 	var ei = get_editor_interface()
 	var es = ei.get_selection()
 	var objects = es.get_transformable_selected_nodes()
+	
+	var parent = null
+	
 	if objects == null || objects.empty():
 		var root = ei.get_edited_scene_root()
 		if !(root is Spatial):
 			return
-		spatialparent = root
-	elif objects.size() > 1:
-		# Multiple nodes selected. Only one is acceptable for scene placement.
-		return
-	else:
+		parent = root
+	elif objects.size() == 1:
 		if !(objects[0] is Spatial):
 			return
-		spatialparent = objects[0];
+		parent = objects[0];
+	
+	if parent == null:
+		return
+	
+	initialize_scene_placement(camera, path, parent)
 
+
+func initialize_scene_placement(camera: Camera, path: String, parent: Spatial):
+	# Get the selected scene in the file system that can be instanced.
+	if camera == null || path.empty() || parent == null:
+		return
+	
+	var ps := get_placement_scene(path)
+	if ps == null:
+		return
+		
+	if action != GSRAction.NONE:
+		cancel_manipulation()
+	
 	action = GSRAction.SCENE_PLACE
-	start_mousepos = mousepos
+	spatial_file_path = path
 	
 	spatialscene = ps.instance()
+	spatialparent = parent
+
+	start_mousepos = mousepos
+	
 	spatialparent.add_child(spatialscene)
 
 	editor_camera = camera	
@@ -914,7 +958,6 @@ func start_manipulation(camera: Camera, newaction):
 		
 	action = newaction
 	local = is_local_button_down()
-	
 	
 	var ei = get_editor_interface()
 	var es = ei.get_selection()
@@ -1107,6 +1150,28 @@ func set_vector_component(vec: Vector3, axis: int, val: float) -> Vector3:
 	return vec
 
 
+func vector_exclude_plane(vec: Vector3, plane: int):
+	if plane == GSRAxis.X:
+		return Vector3(0, vec.y, vec.z)
+	if plane == GSRAxis.Y:
+		return Vector3(vec.x, 0, vec.z)
+	if plane == GSRAxis.Z:
+		return Vector3(vec.x, vec.y, 0)
+
+
+func vector_plane(vec: Vector3, plane: int):
+	if plane == GSRAxis.X:
+		return Vector3(vec.x, 0.0, 0.0)
+	if plane == GSRAxis.Y:
+		return Vector3(0.0, vec.y, 0.0)
+	if plane == GSRAxis.Z:
+		return Vector3(0.0, 0.0, vec.z)
+
+
+func vmod(vec: Vector3, m: float) -> Vector3:
+	return Vector3(fmod(vec.x, m), fmod(vec.y, m), fmod(vec.z, m))
+
+
 # Returns a plane from a normal and a point it should contain.
 func plane_from_point(normal, point: Vector3):
 	if normal == null || normal == Vector3.ZERO:
@@ -1124,15 +1189,6 @@ func scene_placement_plane() -> Plane:
 func scene_placement_limited_plane():
 	#var plane = plane_from_point(plane_axis(spatialparent, limit), spatialparent.global_transform.origin)
 	return plane_from_point(editor_camera.global_transform.basis.z, spatialscene.global_transform.origin)
-
-
-func vector_exclude_plane(vec: Vector3, plane: int):
-	if plane == GSRAxis.X:
-		return Vector3(0, vec.y, vec.z)
-	if plane == GSRAxis.Y:
-		return Vector3(vec.x, 0, vec.z)
-	if plane == GSRAxis.Z:
-		return Vector3(vec.x, vec.y, 0)
 
 
 func update_scene_placement():
