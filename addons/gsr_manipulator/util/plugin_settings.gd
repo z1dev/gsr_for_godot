@@ -33,6 +33,8 @@ var grid_subdiv := 10
 var zy_swapped = false
 # Whether snap settings are shown in the 3D editor
 var snap_controls_shown = false
+# Using the plugin's mouse selection method in the 3d scene.
+var smart_select = false
 
 # Presets (stored in dictionaries) created for grid snap and subdivision values.
 var snap_presets = []
@@ -46,6 +48,7 @@ func load_config():
 	if section != null:
 		zy_swapped = section.get("z_up", false)
 		snap_controls_shown = section.get("snap_controls_shown", false)
+		smart_select = section.get("smart_select", false)
 		selected_snap_preset = section.get("snap_preset", false)
 		
 	section = config.get("grid")
@@ -80,7 +83,7 @@ func load_config():
 
 func save_config():
 	var config = { "settings" : { "z_up" : zy_swapped, "snap_preset" : selected_snap_preset,
-					"snap_controls_shown" : snap_controls_shown },
+					"snap_controls_shown" : snap_controls_shown, "smart_select" : smart_select },
 			"grid" : { "grid_size" : grid_size, "grid_subdiv" : grid_subdiv } }
 	
 	var presets = {}

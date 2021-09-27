@@ -20,6 +20,7 @@ extends EditorPlugin
 
 const UI = preload("./util/editor_ui.gd")
 const FS = preload("./util/file_system.gd")
+const Scene = preload("./util/scene.gd")
 const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
 const GridMesh = preload("./mesh/grid_mesh.gd")
@@ -111,8 +112,11 @@ var scale_axis_display: Vector3
 # plane when drawing the axis of manipulation.
 var editor_camera: Camera = null
 
-
-# Set to true during manipulation when the gizmos are shrank invisible.
+# Set when smart select is toggled. When true, gizmos will be invisible
+# (that is, scaled to 0%).
+var gizmodisabled = false
+# Set to true during manipulation to mark gizmos hidden temporarily. Overriden
+# by gizmodisabled if it's set to true.
 var gizmohidden = false
 # Used when hiding gizmos so their original size can be restored.
 var saved_gizmo_size
@@ -153,6 +157,9 @@ var spatial_placement_plane: int = GSRAxis.Y
 var grid_mesh = null
 var cross_mesh = null
 
+# Node last selected in the 3d viewport by clicking.
+var last_selected = null
+
 
 func _enter_tree():
 	settings.connect("snap_settings_changed", self, "_on_snap_settings_changed")
@@ -161,9 +168,12 @@ func _enter_tree():
 	add_control_dock()
 	register_callbacks(true)
 	generate_meshes()
+	if settings.smart_select:
+		update_smart_select(true)
 
 
 func _exit_tree():
+	update_smart_select(false)
 	settings.disconnect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.save_config()
 	register_callbacks(false)
@@ -173,6 +183,7 @@ func _exit_tree():
 #	selected_objects = weakref(null)
 	remove_control_dock()
 	free_meshes()
+	
 
 
 func add_control_dock():
@@ -199,10 +210,14 @@ func add_toolbuttons():
 		popup.set_item_tooltip(1, "Show snapping options in 3D editor")
 		popup.set_item_checked(1, settings.snap_controls_shown)
 		
+		popup.add_check_item("Smart select")
+		popup.set_item_tooltip(2, "Cycle through objects when left-clicking at the same position.\nWarning: This disables built in gizmos")
+		popup.set_item_checked(2, settings.smart_select)
+		
 		popup.add_separator()
 		
 		popup.add_item("Unpack scene...")
-		popup.set_item_tooltip(3, "Save child scenes in their own scene files.")
+		popup.set_item_tooltip(4, "Save child scenes in their own scene files.")
 		
 		
 		UI.spatial_toolbar(self).add_child(menu_button)
@@ -229,14 +244,18 @@ func _on_menu_button_popup_index_pressed(index: int):
 	if index == 0:
 		popup.set_item_checked(0, !popup.is_item_checked(0))
 		settings.zy_swapped = popup.is_item_checked(0)
-		return
 	# Snap controls
-	if index == 1:
+	elif index == 1:
 		popup.set_item_checked(1, !popup.is_item_checked(1))
 		settings.snap_controls_shown = popup.is_item_checked(1)
 		update_control_dock()
+	# Smart select
+	elif index == 2:
+		popup.set_item_checked(2, !popup.is_item_checked(2))
+		settings.smart_select = popup.is_item_checked(2)
+		update_smart_select(settings.smart_select)
 	# Unpack scene
-	if index == 3:
+	elif index == 4:
 		unpack_scene()
 
 
@@ -371,7 +390,19 @@ func tile_step_size(with_smoothing: bool):
 	if !with_smoothing:
 		return settings.grid_size
 	return settings.grid_size / settings.grid_subdiv
+
+
+func set_gizmo_disabled(disable):
+	if gizmodisabled == disable:
+		return
+		
+	gizmodisabled = disable
 	
+	if gizmohidden:
+		return
+
+	__set_gizmo_visibility(!gizmodisabled)
+		
 
 func hide_gizmo():
 	if gizmohidden:
@@ -379,8 +410,10 @@ func hide_gizmo():
 
 	gizmohidden = true
 
-	saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
-	UI.set_setting(self, "editors/3d/manipulator_gizmo_size", 0)
+	if gizmodisabled:
+		return
+		
+	__set_gizmo_visibility(false)
 	
 
 func show_gizmo():
@@ -389,8 +422,20 @@ func show_gizmo():
 
 	gizmohidden = false
 
-	UI.set_setting(self, "editors/3d/manipulator_gizmo_size", saved_gizmo_size)
-	saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
+	if gizmodisabled:
+		return
+		
+	__set_gizmo_visibility(true)
+
+
+# Inner method to scale unscale gizmo. Don't call directly.
+func __set_gizmo_visibility(to_visible):
+	if to_visible:
+		UI.set_setting(self, "editors/3d/manipulator_gizmo_size", saved_gizmo_size)
+		saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
+	else:
+		saved_gizmo_size = UI.get_setting(self, "editors/3d/manipulator_gizmo_size")
+		UI.set_setting(self, "editors/3d/manipulator_gizmo_size", 0)
 
 
 func disable_undoredo():
@@ -563,6 +608,14 @@ func forward_spatial_gui_input(camera, event):
 				else:
 					finalize_manipulation()
 				return true
+		else:
+			if event.pressed && event.button_index == BUTTON_LEFT && settings.smart_select:
+				last_selected = Scene.mouse_select_spatial(self, camera, mousepos, last_selected)
+				#print(last_selected)
+				if last_selected != null:
+					get_editor_interface().get_selection().clear()
+					get_editor_interface().get_selection().add_node(last_selected)
+					return true
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
 		if action == GSRAction.NONE:
@@ -658,7 +711,7 @@ func forward_spatial_draw_over_viewport(overlay):
 		text += "  Cell x: %s%d.%d  y: %s%d.%d  z: %s%d.%d" % [prefx, int(cell.x), step.x,
 				prefy, int(cell.y), step.y,
 				prefz, int(cell.z), step.z]
-		selection_centerpos = editor_camera.unproject_position(selection_center)
+		selection_centerpos = Scene.unproject(editor_camera, selection_center)
 				
 		
 	overlay.draw_string(f, Vector2(16, 57), text, Color(0, 0, 0, 1))
@@ -714,7 +767,7 @@ func draw_axis(control: Control, which, gtrans = null):
 	var viewrect := control.get_rect()
 	
 	var center = selection_center if gtrans == null else gtrans.origin
-	var centerpos = selection_centerpos if gtrans == null else editor_camera.unproject_position(center)
+	var centerpos = selection_centerpos if gtrans == null else Scene.unproject(editor_camera, center)
 	
 	# x red
 	# z blue
@@ -736,9 +789,9 @@ func draw_axis(control: Control, which, gtrans = null):
 		up = limit_transform.basis.y.normalized()
 		forward = limit_transform.basis.z.normalized()
 	
-	var xaxis = (centerpos - editor_camera.unproject_position(center + left * 10000.0)).normalized()
-	var yaxis = (centerpos - editor_camera.unproject_position(center + up * 10000.0)).normalized()
-	var zaxis = (centerpos - editor_camera.unproject_position(center + forward * 10000.0)).normalized()
+	var xaxis = (centerpos - Scene.unproject(editor_camera, center + left * 10000.0)).normalized()
+	var yaxis = (centerpos - Scene.unproject(editor_camera, center + up * 10000.0)).normalized()
+	var zaxis = (centerpos - Scene.unproject(editor_camera, center + forward * 10000.0)).normalized()
 	
 	var checkaxis
 	
@@ -1016,8 +1069,8 @@ func initialize_manipulation(spatials):
 	else:
 		selection_center = (sel_min + sel_max) / 2.0
 		
-	selection_centerpos = editor_camera.unproject_position(selection_center)
-	selection_distance = selection_center.distance_to(editor_camera.project_ray_origin(selection_centerpos))
+	selection_centerpos = Scene.unproject(editor_camera, selection_center)
+	selection_distance = selection_center.distance_to(Scene.camera_ray_origin(editor_camera, selection_centerpos))
 	start_viewpoint = editor_camera.project_position(mousepos, selection_distance)
 	
 	update_overlays()
@@ -1198,8 +1251,8 @@ func update_scene_placement():
 	if limit != spatial_placement_plane:
 		var plane = scene_placement_plane()
 				
-		var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos),
-				editor_camera.project_ray_normal(mousepos))
+		var point = plane.intersects_ray(Scene.camera_ray_origin(editor_camera, mousepos),
+				Scene.camera_ray_normal(editor_camera, mousepos))
 		if point == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
@@ -1249,8 +1302,8 @@ func update_scene_placement():
 				cross_mesh.visible = false
 			return
 			
-		var point = plane.intersects_ray(editor_camera.project_ray_origin(mousepos),
-				editor_camera.project_ray_normal(mousepos))
+		var point = plane.intersects_ray(Scene.camera_ray_origin(editor_camera, mousepos),
+				Scene.camera_ray_normal(editor_camera, mousepos))
 		if point == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
@@ -1274,7 +1327,7 @@ func update_scene_placement():
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
 		
 	selection_center = spatialscene.global_transform.origin
-	selection_centerpos = editor_camera.unproject_position(selection_center)
+	selection_centerpos = Scene.unproject(editor_camera, selection_center)
 	update_overlays()
 
 
@@ -1371,13 +1424,13 @@ func apply_manipulation():
 			if (limit & GSRLimit.X) || (limit & GSRLimit.Y) || (limit & GSRLimit.Z):
 				if (limit & GSRLimit.REVERSE):
 					var plane = get_limit_axis_reverse_plane(ix)
-					var cam_pt = plane.intersects_ray(camera.project_ray_origin(manipulation_mousepos()), camera.project_ray_normal(manipulation_mousepos()))
+					var cam_pt = plane.intersects_ray(Scene.camera_ray_origin(camera, manipulation_mousepos()), Scene.camera_ray_normal(camera, manipulation_mousepos()))
 					if cam_pt != null:
 						offset = cam_pt - start_viewpoint
 					else:
 						offset = Vector3.ZERO #selection[ix].global_transform.origin - start_transform[ix].origin
 				else:
-					var cvec = camera.project_ray_normal(manipulation_mousepos())
+					var cvec = Scene.camera_ray_normal(camera, manipulation_mousepos())
 					# Vector of the axis, either global or local, based on value of `local`
 					var xvec = get_limit_axis_vector(ix)
 					# Make a plane with the selection's center point on it. The mouse position
@@ -1392,7 +1445,7 @@ func apply_manipulation():
 					# The point where the normal from the mouse intersects the plane. The
 					# distance of this point from the selection along the xvec determines
 					# how much to move the selection.
-					var cam_pt = plane.intersects_ray(camera.project_ray_origin(manipulation_mousepos()), cvec)
+					var cam_pt = plane.intersects_ray(Scene.camera_ray_origin(camera, manipulation_mousepos()), cvec)
 					if cam_pt != null:
 						plane = Plane(xvec, 0)
 						plane = Plane(xvec, plane.distance_to(start_viewpoint))
@@ -1753,6 +1806,10 @@ func update_cross_position():
 	cross_mesh.rotation = spatialscene.rotation
 
 
+func update_smart_select(turn_on):
+	set_gizmo_disabled(turn_on)
+
+
 func unpack_scene():
 	var scene = get_editor_interface().get_edited_scene_root()
 	if scene == null:
@@ -1785,4 +1842,5 @@ func _on_unpack_dir_selected(dir):
 
 func get_current_action():
 	return action if active_action == GSRAction.NONE else active_action
+
 
