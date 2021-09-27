@@ -398,11 +398,22 @@ func set_gizmo_disabled(disable):
 		
 	gizmodisabled = disable
 	
+	var dlg = UI.get_editor_settings_dialog(self)
+	if gizmodisabled:
+		dlg.connect("visibility_changed", self, "_on_editor_visibility_changed")
+	else:
+		dlg.disconnect("visibility_changed", self, "_on_editor_visibility_changed")
+	
 	if gizmohidden:
 		return
 
 	__set_gizmo_visibility(!gizmodisabled)
-		
+
+
+func _on_editor_visibility_changed():
+	var dlg = UI.get_editor_settings_dialog(self)
+	__set_gizmo_visibility(dlg.visible)
+
 
 func hide_gizmo():
 	if gizmohidden:
@@ -613,8 +624,10 @@ func forward_spatial_gui_input(camera, event):
 				last_selected = Scene.mouse_select_spatial(self, camera, mousepos, last_selected)
 				#print(last_selected)
 				if last_selected != null:
-					get_editor_interface().get_selection().clear()
-					get_editor_interface().get_selection().add_node(last_selected)
+					var ei := get_editor_interface()
+					ei.get_selection().clear()
+					ei.get_selection().add_node(last_selected)
+					ei.inspect_object(last_selected)
 					return true
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)

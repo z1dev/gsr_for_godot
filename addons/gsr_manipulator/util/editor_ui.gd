@@ -39,6 +39,25 @@ static func find_child(control: Node, childclass: String, index: int = 0):
 	return null
 
 
+# Returns the first child under control with the the given class name. First
+# searches the direct children, then each folder recursively in order.
+static func find_child_recursive(control: Node, childclass: String):
+	if control == null:
+		return null
+	
+	var arr = [control]
+	var pos = 0
+	
+	while pos < arr.size():
+		control = arr[pos]
+		for c in control.get_children():
+			if c.get_class() == childclass:
+				return c
+			arr.append(c)
+		pos += 1
+	return null
+
+
 static func get_top_bar(editor: EditorPlugin):
 	var ei = editor.get_editor_interface()
 	return find_child(find_child(ei.get_base_control(), "VBoxContainer"), "HBoxContainer")
@@ -54,8 +73,10 @@ const MENU_DEBUG = 2
 const MENU_EDITOR = 3
 const MENU_HELP = 4
 
+
 static func get_menu(editor: EditorPlugin, index) -> PopupMenu:
 	return find_child(find_child(get_menu_bar(editor), "MenuButton", index), "PopupMenu") as PopupMenu
+
 
 static func current_main_screen(editor: EditorPlugin):
 	var ei = editor.get_editor_interface()
@@ -97,6 +118,11 @@ static func spatial_editor(editor: EditorPlugin):
 	var vp = ei.get_editor_viewport()
 	
 	return find_child(vp, "SpatialEditor")
+
+
+static func get_editor_settings_dialog(editor: EditorPlugin):
+	var ei = editor.get_editor_interface()
+	return find_child_recursive(ei.get_base_control(), "EditorSettingsDialog")
 
 
 static func spatial_toolbar(editor: EditorPlugin):
