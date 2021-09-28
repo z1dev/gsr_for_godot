@@ -50,6 +50,42 @@ class FoundOrderSorter:
 		return adist < bdist
 
 
+
+static func clear_selection(plugin: EditorPlugin):
+	var ei := plugin.get_editor_interface()
+	ei.get_selection().clear()
+	ei.inspect_object(null)
+
+
+static func is_node_selected(plugin: EditorPlugin, node: Node):
+	var ei = plugin.get_editor_interface()
+	var es = ei.get_selection()
+	var sel = es.get_selected_nodes()
+	return sel.find(node) != -1
+
+
+static func set_selected(plugin: EditorPlugin, node: Node, select: bool):
+	var ei := plugin.get_editor_interface()
+	var es = ei.get_selection()
+	var sel = es.get_selected_nodes()
+	var ix = sel.find(node)
+	if select:
+		if ix != -1:
+			return
+		es.add_node(node)
+		ei.inspect_object(node)
+	else:
+		if ix == -1:
+			return
+		var nextsel = null
+		if ix < sel.size() - 1:
+			nextsel = sel[ix + 1]
+		elif ix > 0:
+			nextsel = sel[ix - 1]
+		es.remove_node(node)
+		
+		ei.inspect_object(nextsel)
+
 # Return a node at mousepos owned by the scene root. To return the node that's coming after another
 # at the position, pass it in after_node.
 static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos: Vector2, after_node = null, reset = false):

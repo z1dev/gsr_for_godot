@@ -157,8 +157,17 @@ var spatial_placement_plane: int = GSRAxis.Y
 var grid_mesh = null
 var cross_mesh = null
 
-# Node last selected in the 3d viewport by clicking.
-var last_selected = null
+# Node last selected in the 3d viewport by clicking when using smart select.
+var mouse_select_last = null
+
+# Mouse position for the last smart select action.
+var mouse_select_last_pos
+# Transformation of camera for the last smart select action.
+var mouse_select_camera_transform: Transform
+
+# Maximum distance the mouse can be away from mouse_select_last_pos for the smart select to
+# pick one after the last selected
+const MOUSE_SELECT_RESET_DISTANCE = 5
 
 
 func _enter_tree():
@@ -497,7 +506,12 @@ func save_manipulation_mousepos():
 	reference_mousepos = mousepos
 	
 	
+var last_input_event_id = 0
 func forward_spatial_gui_input(camera, event):
+	if last_input_event_id == event.get_instance_id():
+		return true
+	last_input_event_id = event.get_instance_id()
+	
 	if event is InputEventKey:
 		if event.echo:
 			return false
@@ -621,14 +635,22 @@ func forward_spatial_gui_input(camera, event):
 				return true
 		else:
 			if event.pressed && event.button_index == BUTTON_LEFT && settings.smart_select:
-				last_selected = Scene.mouse_select_spatial(self, camera, mousepos, last_selected)
-				#print(last_selected)
-				if last_selected != null:
-					var ei := get_editor_interface()
-					ei.get_selection().clear()
-					ei.get_selection().add_node(last_selected)
-					ei.inspect_object(last_selected)
+				if event.shift:
+					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos)
+				else:
+					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, mouse_select_last, (mouse_select_last_pos == null || mouse_select_last_pos.distance_to(mousepos) > MOUSE_SELECT_RESET_DISTANCE) || camera.transform != mouse_select_camera_transform)
+				
+				mouse_select_last_pos = mousepos
+				mouse_select_camera_transform = camera.transform
+				
+				if mouse_select_last != null:
+					if event.shift:
+						Scene.set_selected(self, mouse_select_last, !Scene.is_node_selected(self, mouse_select_last))
+					else:
+						Scene.clear_selection(self)
+						Scene.set_selected(self, mouse_select_last, true)
 					return true
+					
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
 		if action == GSRAction.NONE:
