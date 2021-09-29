@@ -200,7 +200,6 @@ func _exit_tree():
 #	selected_objects = weakref(null)
 	remove_control_dock()
 	free_meshes()
-	
 
 
 func add_control_dock():
