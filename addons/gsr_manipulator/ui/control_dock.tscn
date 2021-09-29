@@ -1,0 +1,126 @@
+[gd_scene load_steps=5 format=2]
+
+[ext_resource path="res://addons/gsr_manipulator/ui/control_dock.gd" type="Script" id=1]
+[ext_resource path="res://addons/gsr_manipulator/ui/number_edit.gd" type="Script" id=2]
+
+[sub_resource type="Image" id=3]
+data = {
+"data": PoolByteArray( 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ),
+"format": "LumAlpha8",
+"height": 16,
+"mipmaps": false,
+"width": 16
+}
+
+[sub_resource type="ImageTexture" id=2]
+flags = 4
+flags = 4
+image = SubResource( 3 )
+size = Vector2( 16, 16 )
+
+[node name="GSR" type="PanelContainer"]
+size_flags_horizontal = 3
+script = ExtResource( 1 )
+__meta__ = {
+"_edit_use_anchors_": false
+}
+
+[node name="HBoxSettings" type="HBoxContainer" parent="."]
+margin_left = 7.0
+margin_top = 7.0
+margin_right = 611.0
+margin_bottom = 31.0
+
+[node name="Label3" type="Label" parent="HBoxSettings"]
+margin_top = 5.0
+margin_right = 34.0
+margin_bottom = 19.0
+text = "GSR -"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="HBoxSettings"]
+margin_left = 38.0
+margin_right = 311.0
+margin_bottom = 24.0
+
+[node name="Label" type="Label" parent="HBoxSettings/HBoxContainer"]
+margin_top = 5.0
+margin_right = 61.0
+margin_bottom = 19.0
+text = "Grid size:"
+align = 2
+__meta__ = {
+"_edit_use_anchors_": false
+}
+
+[node name="GridSizeEdit" type="LineEdit" parent="HBoxSettings/HBoxContainer"]
+margin_left = 65.0
+margin_right = 123.0
+margin_bottom = 24.0
+size_flags_horizontal = 3
+text = "1.0"
+align = 2
+caret_blink = true
+caret_blink_speed = 0.5
+script = ExtResource( 2 )
+
+[node name="Label5" type="Label" parent="HBoxSettings/HBoxContainer"]
+margin_left = 127.0
+margin_top = 5.0
+margin_right = 211.0
+margin_bottom = 19.0
+text = "Subdivisions:"
+align = 2
+
+[node name="GridSubdivEdit" type="LineEdit" parent="HBoxSettings/HBoxContainer"]
+margin_left = 215.0
+margin_right = 273.0
+margin_bottom = 24.0
+size_flags_horizontal = 3
+text = "10"
+align = 2
+caret_blink = true
+caret_blink_speed = 0.5
+script = ExtResource( 2 )
+
+[node name="VSeparator" type="VSeparator" parent="HBoxSettings"]
+margin_left = 315.0
+margin_right = 319.0
+margin_bottom = 24.0
+
+[node name="HBoxPreset" type="HBoxContainer" parent="HBoxSettings"]
+margin_left = 323.0
+margin_right = 604.0
+margin_bottom = 24.0
+size_flags_vertical = 0
+
+[node name="SaveButton" type="Button" parent="HBoxSettings/HBoxPreset"]
+margin_right = 53.0
+margin_bottom = 24.0
+hint_tooltip = "Save current values to a preset."
+text = "Save..."
+
+[node name="PresetOptions" type="OptionButton" parent="HBoxSettings/HBoxPreset"]
+margin_left = 57.0
+margin_right = 217.0
+margin_bottom = 24.0
+rect_min_size = Vector2( 160, 0 )
+size_flags_horizontal = 3
+disabled = true
+clip_text = true
+__meta__ = {
+"_edit_use_anchors_": false
+}
+
+[node name="RevertButton" type="ToolButton" parent="HBoxSettings/HBoxPreset"]
+margin_left = 221.0
+margin_right = 249.0
+margin_bottom = 24.0
+disabled = true
+icon = SubResource( 2 )
+
+[node name="DelButton" type="ToolButton" parent="HBoxSettings/HBoxPreset"]
+margin_left = 253.0
+margin_right = 281.0
+margin_bottom = 24.0
+disabled = true
+icon = SubResource( 2 )
