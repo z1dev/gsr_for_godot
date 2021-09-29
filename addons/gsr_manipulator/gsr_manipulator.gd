@@ -27,7 +27,7 @@ const GridMesh = preload("./mesh/grid_mesh.gd")
 const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 
-const TINY_VALE = 0.0001
+const TINY_VALUE = 0.0001
 
 
 const mouse_button_map = [BUTTON_LEFT, BUTTON_RIGHT, BUTTON_MIDDLE, BUTTON_XBUTTON1, BUTTON_XBUTTON2]
@@ -753,13 +753,13 @@ func forward_spatial_draw_over_viewport(overlay):
 		text += "  Scale: %.2f%%  Sx: %.4f  Sy: %.4f  Sz: %.4f" % [scale_display, scale_axis_display.x, scale_axis_display.y, scale_axis_display.z]
 	elif get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
 		text += "  Coords: (%.2f, %.2f, %.2f)" % [spatialscene.transform.origin.x, spatialscene.transform.origin.y, spatialscene.transform.origin.z]
-		var cell = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALE) / settings.grid_size),
-				int(floor((abs(spatialscene.transform.origin.y) + TINY_VALE) / settings.grid_size)),
-				int(floor((abs(spatialscene.transform.origin.z) + TINY_VALE) / settings.grid_size)))
+		var cell = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALUE) / settings.grid_size),
+				int(floor((abs(spatialscene.transform.origin.y) + TINY_VALUE) / settings.grid_size)),
+				int(floor((abs(spatialscene.transform.origin.z) + TINY_VALUE) / settings.grid_size)))
 		var stepsize = settings.grid_size / settings.grid_subdiv
-		var step = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALE - cell.x * settings.grid_size) / stepsize),
-				int((abs(spatialscene.transform.origin.y) + TINY_VALE - cell.y * settings.grid_size) / stepsize),
-				int((abs(spatialscene.transform.origin.z) + TINY_VALE - cell.z * settings.grid_size) / stepsize))
+		var step = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALUE - cell.x * settings.grid_size) / stepsize),
+				int((abs(spatialscene.transform.origin.y) + TINY_VALUE - cell.y * settings.grid_size) / stepsize),
+				int((abs(spatialscene.transform.origin.z) + TINY_VALUE - cell.z * settings.grid_size) / stepsize))
 		var prefx = "-" if spatialscene.transform.origin.x < 0 else ""
 		var prefy = "-" if spatialscene.transform.origin.y < 0 else ""
 		var prefz = "-" if spatialscene.transform.origin.z < 0 else ""
@@ -1032,10 +1032,18 @@ func start_scene_manipulation(camera: Camera):
 		spatialparent.add_child(grid_mesh)
 		spatialparent.add_child(cross_mesh)
 	
-	spatial_offset.x = fmod(spatialscene.transform.origin.x, tile_step_size(false))
-	spatial_offset.y = fmod(spatialscene.transform.origin.y, tile_step_size(false))
-	spatial_offset.z = fmod(spatialscene.transform.origin.z, tile_step_size(false))
-	
+	if spatial_placement_plane != GSRLimit.X:
+		spatial_offset.x = fmod(spatialscene.transform.origin.x + TINY_VALUE, tile_step_size(false))
+	else:
+		spatial_offset.x = stepify(spatialscene.transform.origin.x + TINY_VALUE, tile_step_size(false))
+	if spatial_placement_plane != GSRLimit.Y:
+		spatial_offset.y = fmod(spatialscene.transform.origin.y + TINY_VALUE, tile_step_size(false))
+	else:
+		spatial_offset.y = stepify(spatialscene.transform.origin.y + TINY_VALUE, tile_step_size(false))
+	if spatial_placement_plane != GSRLimit.Z:
+		spatial_offset.z = fmod(spatialscene.transform.origin.z + TINY_VALUE, tile_step_size(false))
+	else:
+		spatial_offset.z = stepify(spatialscene.transform.origin.z + TINY_VALUE, tile_step_size(false))
 	grid_start_transform = spatialscene.transform
 	
 	hide_gizmo()
@@ -1129,15 +1137,13 @@ func initialize_manipulation(spatials):
 	start_viewpoint = editor_camera.project_position(mousepos, selection_distance)
 	
 	update_overlays()
-	#Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+
 
 func change_scene_limit(newlimit):
 	if !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
 		return
 		
 	if limit != newlimit:
-#		if limit == spatial_placement_plane:
-#			cancel_scene_limit()
 		saved_offset = vector_component(spatial_offset, newlimit)
 		limit = newlimit
 		limit_transform = spatialparent.global_transform
