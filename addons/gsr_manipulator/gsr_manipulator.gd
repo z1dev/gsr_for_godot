@@ -29,6 +29,14 @@ const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 const TINY_VALE = 0.0001
 
+
+const mouse_button_map = [BUTTON_LEFT, BUTTON_RIGHT, BUTTON_MIDDLE, BUTTON_XBUTTON1, BUTTON_XBUTTON2]
+const mouse_button_mask = [BUTTON_MASK_LEFT, BUTTON_MASK_RIGHT, BUTTON_MASK_MIDDLE, BUTTON_MASK_XBUTTON1, BUTTON_MASK_XBUTTON2]
+
+# A bit mask of currently pressed mouse buttons.
+var mouse_button_pressed = 0	
+	
+
 # Separate script for stuff that needs to persist
 var settings: PluginSettings = PluginSettings.new()
 
@@ -513,9 +521,12 @@ func forward_spatial_gui_input(camera, event):
 	last_input_event_id = event.get_instance_id()
 	
 	if event is InputEventKey:
-		if event.echo:
+		if mouse_button_pressed != 0:
 			return false
 		
+		if event.echo:
+			return false
+			
 		if event.scancode == KEY_SHIFT:
 			if action == GSRAction.NONE:
 				return false
@@ -614,6 +625,16 @@ func forward_spatial_gui_input(camera, event):
 				return true
 	
 	elif event is InputEventMouseButton:
+		# Storing pressed mouse button index helps preventing clashes with
+		# Godot functionality like free look.
+		var button_index = mouse_button_map.find(event.button_index)
+		if button_index != -1:
+			if event.pressed:
+				mouse_button_pressed |= mouse_button_mask[button_index]
+			else:
+				mouse_button_pressed &= ~mouse_button_mask[button_index]
+			
+		
 		if action != GSRAction.NONE:
 			if !event.pressed:
 				return
