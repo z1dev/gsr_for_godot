@@ -18,6 +18,7 @@
 tool
 extends EditorPlugin
 
+const Interop = preload("./interop/interop.gd")
 const UI = preload("./util/editor_ui.gd")
 const FS = preload("./util/file_system.gd")
 const Scene = preload("./util/scene.gd")
@@ -179,6 +180,7 @@ const MOUSE_SELECT_RESET_DISTANCE = 5
 
 
 func _enter_tree():
+	Interop.register(self, "gsr")
 	settings.connect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.load_config()
 	add_toolbuttons()
@@ -190,6 +192,7 @@ func _enter_tree():
 
 
 func _exit_tree():
+	Interop.deregister(self, "gsr")
 	update_smart_select(false)
 	settings.disconnect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.save_config()
@@ -977,6 +980,8 @@ func start_scene_placement(camera: Camera):
 
 
 func initialize_scene_placement(camera: Camera, path: String, parent: Spatial):
+	Interop.start_work(self, "gsr_transform")
+
 	# Get the selected scene in the file system that can be instanced.
 	if camera == null || path.empty() || parent == null:
 		return
@@ -1018,6 +1023,8 @@ func start_scene_manipulation(camera: Camera):
 	var objects = es.get_transformable_selected_nodes()
 	if objects == null || objects.empty() || objects.size() > 1 || objects[0].get_parent() == null || !(objects[0].get_parent() is Spatial):
 		return
+				
+	Interop.start_work(self, "gsr_transform")
 				
 	if action != GSRAction.NONE:
 		cancel_manipulation()
@@ -1067,6 +1074,8 @@ func change_scene_manipulation(newaction):
 
 
 func start_manipulation(camera: Camera, newaction):
+	Interop.start_work(self, "gsr_transform")
+
 	if action != GSRAction.NONE:
 		cancel_manipulation()
 	
@@ -1759,6 +1768,8 @@ func finalize_manipulation():
 
 
 func reset(full_reset = true):
+	var old_action = action
+	
 	if full_reset || active_action == GSRAction.NONE:
 		# Reset these only if not in a sub-action.
 		action = GSRAction.NONE
@@ -1793,6 +1804,9 @@ func reset(full_reset = true):
 	reference_mousepos = Vector2.ZERO
 	
 	update_overlays()
+	
+	if old_action != GSRAction.NONE && action == GSRAction.NONE:
+		Interop.end_work(self, "gsr_transform")
 
 
 func offset_object(index: int, movedby: Vector3):
