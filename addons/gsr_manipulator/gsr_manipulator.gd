@@ -136,13 +136,11 @@ var undoredo_disabled = false
 var hadundo = false
 var hadredo = false
 
-
 # Button added to toolbar for settings like the z key toggle.
 var menu_button: MenuButton
 
 # Dock added to the UI with plugin settings.
 var control_dock = null
-
 
 # Scene being placed on the scene as a "tile"
 var spatialscene: Spatial = null
@@ -176,6 +174,8 @@ var mouse_select_camera_transform: Transform
 # Maximum distance the mouse can be away from mouse_select_last_pos for the smart select to
 # pick one after the last selected
 const MOUSE_SELECT_RESET_DISTANCE = 5
+
+var interop_ignore_input := false
 
 
 func _enter_tree():
@@ -218,6 +218,14 @@ func _exit_tree():
 	remove_control_dock()
 	free_meshes()
 	Interop.deregister(self, "gsr")
+
+
+func _interop_notification(plugin: EditorPlugin, code, args):
+	match code:
+		Interop.NOTIFY_REQUEST_IGNORE_INPUT:
+			interop_ignore_input = true
+		Interop.NOTIFY_ALLOW_INPUT:
+			interop_ignore_input = false
 
 
 func add_control_dock():
@@ -500,9 +508,12 @@ func save_manipulation_mousepos():
 	mousepos_offset += (mousepos - reference_mousepos) * get_action_strength()
 	reference_mousepos = mousepos
 	
-	
+
+# Getting around an issue (bug?) in Godot that sends the same input event twice.
 var last_input_event_id = 0
 func forward_spatial_gui_input(camera, event):
+	if interop_ignore_input:
+		return false
 	if last_input_event_id == event.get_instance_id():
 		return true
 	last_input_event_id = event.get_instance_id()
