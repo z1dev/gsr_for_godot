@@ -25,6 +25,7 @@ const Scene = preload("./util/scene.gd")
 const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
 const GridMesh = preload("./mesh/grid_mesh.gd")
+const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 
 const TINY_VALUE = 0.0001
@@ -57,16 +58,21 @@ var limit_transform = null
 
 # Manipulation method used from GSRAction values. Doesn't necessarily match the active method.
 var action: int = GSRAction.NONE
-# The currently used manipulation of spatials. This can be different from `state`, if it's
-# temporarily switched to a different one. Cancelling or accepting the manipulation will return
-# to the original state.
+# The currently used manipulation of spatials. This can be different from `action`, if it's
+# temporarily switched to a different one. Cancelling or accepting the manipulation will
+# return to the original action setting this to GSRAction.NONE.
 var active_action: int = GSRAction.NONE
 # Axis of manipulation from GSRLimit
 var limit: int = 0
-# Objects being manipulated.
+# Objects being manipulated. Not the same as current selection, because this is
+# only updated for manipulations and only contains transformable nodes.
 var selection := []
 # Using local axis or global
 var local := false
+
+# Spatial nodes used for displaying a fake gizmo. Doesn't have the functionality
+# of gizmos, just used for displaying the center of selection.
+var gizmo_spatials := []
 
 # Set to 0.1 when smoothing movement is required as shift is held down.
 var smoothing := false
@@ -155,7 +161,9 @@ var saved_offset: float
 # from the 0 position is in `spatial_offset`.
 var spatial_placement_plane: int = GSRAxis.Y
 
+# Meshes not added to the final scene tree, used as helpers when manipulating.
 var grid_mesh = null
+var cross_mesh = null
 
 # Node last selected in the 3d viewport by clicking when using smart select.
 var mouse_select_last = null
@@ -185,9 +193,20 @@ func _enter_tree():
 	generate_meshes()
 	if settings.smart_select:
 		update_smart_select(true)
+	
+	var es = get_editor_interface().get_selection()
+	es.connect("selection_changed", self, "_on_editor_selection_changed")
+	var local_button: ToolButton = UI.spatial_use_local_toolbutton(self)
+	local_button.connect("toggled", self, "_on_local_button_toggled")
 
 
 func _exit_tree():
+	var local_button: ToolButton = UI.spatial_use_local_toolbutton(self)
+	local_button.disconnect("toggled", self, "_on_local_button_toggled")
+	
+	var es = get_editor_interface().get_selection()
+	es.disconnect("selection_changed", self, "_on_editor_selection_changed")
+	
 	settings.disconnect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.saved_gizmo_size = saved_gizmo_size if gizmodisabled || gizmohidden else -1
 	update_smart_select(false)
@@ -290,6 +309,16 @@ func update_control_dock():
 	control_dock.visible = settings.snap_controls_shown && UI.current_main_screen(self) == "3D"
 
 
+func _on_editor_selection_changed():
+	var es = get_editor_interface().get_selection()
+	gizmo_spatials = es.get_transformable_selected_nodes()
+	update_cross_transform()
+
+
+func _on_local_button_toggled(button_pressed: bool):
+	update_cross_transform()
+	
+
 func handles(object):
 	if object != null:
 		var ei = get_editor_interface()
@@ -380,7 +409,8 @@ func set_gizmo_disabled(disable):
 		return
 
 	__set_gizmo_visibility(!gizmodisabled)
-
+	_on_editor_selection_changed()
+	
 
 func _on_editor_visibility_changed():
 	var dlg = UI.get_editor_settings_dialog(self)
@@ -397,6 +427,7 @@ func hide_gizmo():
 		return
 		
 	__set_gizmo_visibility(false)
+	_on_editor_selection_changed()
 	
 
 func show_gizmo():
@@ -409,6 +440,7 @@ func show_gizmo():
 		return
 		
 	__set_gizmo_visibility(true)
+	_on_editor_selection_changed()
 
 
 # Inner method to scale unscale gizmo. Don't call directly.
@@ -589,7 +621,6 @@ func forward_spatial_gui_input(camera, event):
 			else:
 				mouse_button_pressed &= ~mouse_button_mask[button_index]
 			
-		
 		if action != GSRAction.NONE:
 			if !event.pressed:
 				return
@@ -657,9 +688,11 @@ func current_camera_position(event: InputEventMouseMotion, camera: Camera) -> Ve
 	return editor_camera.get_parent().get_parent().get_local_mouse_position()
 
 
-func forward_spatial_draw_over_viewport(overlay):
+func forward_spatial_draw_over_viewport(overlay: Control):
+	var overlay_camera = overlay.get_parent().get_child(0).get_child(0).get_child(0) as Camera
+	
 	# Hack to check if this overlay is the one we use right now:
-	if !is_instance_valid(editor_camera) || overlay.get_parent().get_child(0).get_child(0).get_child(0) != editor_camera:
+	if !is_instance_valid(editor_camera) || overlay_camera != editor_camera:
 		return
 		
 	if action == GSRAction.NONE:
@@ -1059,23 +1092,35 @@ func initialize_manipulation(spatials):
 	start_transform.resize(selection.size())
 	start_global_transform.resize(selection.size())
 	
-	selection_center = Vector3.ZERO
+	for ix in selection.size():
+		start_transform[ix] = selection[ix].transform
+		start_global_transform[ix] = selection[ix].global_transform
+		
+	selection_center = calculate_global_center(selection)
+		
+	selection_centerpos = Scene.unproject(editor_camera, selection_center)
+	selection_distance = selection_center.distance_to(Scene.camera_ray_origin(editor_camera, selection_centerpos))
+	start_viewpoint = editor_camera.project_position(mousepos, selection_distance)
 	
+	update_overlays()
+
+
+func calculate_global_center(objects: Array) -> Vector3:
+	var result := Vector3.ZERO
+
 	# Godot doesn't have defines, so I'm just adding a simple local variable here.
 	# Alternate center is how Godot calculates the center of the selection. It's an unnatural
 	# and strange choice, but it's easier to use this for the users when the default gizmo is
 	# positioned there.
 	var alternate_center = true
+	
 	var sel_min: Vector3
 	var sel_max: Vector3
-	
-	for ix in selection.size():
-		start_transform[ix] = selection[ix].transform
-		start_global_transform[ix] = selection[ix].global_transform
-		
-		var ori = selection[ix].global_transform.origin
+
+	for ix in objects.size():
+		var ori = objects[ix].global_transform.origin
 		if !alternate_center:
-			selection_center += ori
+			result += ori
 		else:
 			if ix == 0:
 				sel_min = ori
@@ -1088,15 +1133,11 @@ func initialize_manipulation(spatials):
 				sel_max.y = max(sel_max.y, ori.y)
 				sel_max.z = max(sel_max.z, ori.z)
 	if !alternate_center:
-		selection_center /= selection.size()
+		result /= objects.size()
 	else:
-		selection_center = (sel_min + sel_max) / 2.0
+		result = (sel_min + sel_max) / 2.0
 		
-	selection_centerpos = Scene.unproject(editor_camera, selection_center)
-	selection_distance = selection_center.distance_to(Scene.camera_ray_origin(editor_camera, selection_centerpos))
-	start_viewpoint = editor_camera.project_position(mousepos, selection_distance)
-	
-	update_overlays()
+	return result
 
 
 func change_scene_limit(newlimit):
@@ -1309,9 +1350,6 @@ func update_scene_placement():
 			spatialscene.transform.origin.y = (place + spatial_offset).y
 		else:
 			spatialscene.transform.origin.z = (place + spatial_offset).z
-			
-		grid_mesh.visible = true
-		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
 	else:
 		var plane = scene_placement_limited_plane() 
 		if plane == null:
@@ -1338,8 +1376,10 @@ func update_scene_placement():
 			spatial_offset.z = place.z
 			spatialscene.transform.origin.z = place.z
 			
-		grid_mesh.visible = true
-		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
+	grid_mesh.visible = true
+	update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
+	#update_cross_position(spatialscene.global_transform.origin)
+	update_cross_transform()
 		
 	selection_center = spatialscene.global_transform.origin
 	selection_centerpos = Scene.unproject(editor_camera, selection_center)
@@ -1572,6 +1612,7 @@ func apply_manipulation():
 			scale_axis_display = axis_scale
 			scale_object(ix, scaled, axis_scale, point, local)
 	update_overlays()
+	update_cross_transform()
 
 
 func get_limit_axis_vector(index: int) -> Vector3:
@@ -1747,6 +1788,7 @@ func reset(full_reset = true):
 	reference_mousepos = Vector2.ZERO
 	
 	update_overlays()
+	update_cross_transform()
 	
 	if old_action != GSRAction.NONE && action == GSRAction.NONE:
 		Interop.end_work(self, "gsr_transform")
@@ -1782,17 +1824,22 @@ func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector
 
 
 func generate_meshes():
-	grid_mesh = GridMesh.new(self)
+	if grid_mesh == null:
+		grid_mesh = GridMesh.new(self)
+	if cross_mesh == null:
+		cross_mesh = CrossMesh.new(self)
 
 
 func free_meshes():
 	grid_mesh.free()
 	grid_mesh = null
+	cross_mesh.free()
+	cross_mesh = null
 
 
 func check_grid():
 	if grid_mesh == null:
-		generate_meshes()
+		grid_mesh = GridMesh.new(self)
 	else:
 		grid_mesh.update()
 
@@ -1813,6 +1860,33 @@ func update_grid_rotation():
 
 func update_grid_position(center):
 	grid_mesh.transform.origin = center
+
+
+func update_cross_transform():
+	if cross_mesh.get_parent() == null && get_editor_interface().get_edited_scene_root() != null:
+		get_editor_interface().get_edited_scene_root().add_child(cross_mesh)
+
+	cross_mesh.visible = ((gizmo_spatials != null && !gizmo_spatials.empty()) || spatialscene != null) && (gizmodisabled || gizmohidden)
+
+
+	var position: Vector3
+	var xvec: Vector3
+	var yvec: Vector3
+	var zvec: Vector3
+	if spatialscene != null:
+		position = spatialscene.global_transform.origin
+		xvec = Vector3.RIGHT
+		yvec = Vector3.UP
+		zvec = Vector3.BACK
+	elif gizmo_spatials != null && !gizmo_spatials.empty():
+		position = calculate_global_center(gizmo_spatials)
+		var rotlocal = local if (active_action != GSRAction.NONE || action != GSRAction.NONE) else is_local_button_down() 
+		xvec = (gizmo_spatials[0].global_transform.basis.x if gizmo_spatials.size() == 1 && rotlocal else Vector3.RIGHT).normalized()
+		yvec = (gizmo_spatials[0].global_transform.basis.y if gizmo_spatials.size() == 1 && rotlocal else Vector3.UP).normalized()
+		zvec = (gizmo_spatials[0].global_transform.basis.z if gizmo_spatials.size() == 1 && rotlocal else Vector3.BACK).normalized()
+	else:
+		return
+	cross_mesh.global_transform = Transform(xvec, yvec, zvec, position)
 
 
 func update_smart_select(turn_on):
