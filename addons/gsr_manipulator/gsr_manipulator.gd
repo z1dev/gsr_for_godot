@@ -25,7 +25,6 @@ const Scene = preload("./util/scene.gd")
 const PluginSettings = preload("./util/plugin_settings.gd")
 const ControlDock = preload("./ui/control_dock.tscn")
 const GridMesh = preload("./mesh/grid_mesh.gd")
-const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 
 const TINY_VALUE = 0.0001
@@ -51,9 +50,6 @@ enum GSRAxis {X = 1, Y = 2, Z = 4}
 
 # Objects manipulated by this plugin are selected.
 var selected := false
-
-## Saved objects for hiding their gizmos.
-#var selected_objects: WeakRef = weakref(null)
 
 # When set, the transform used to limit manipulation to an axis, instead of using the global axis
 # for rotation or scale axis.
@@ -128,7 +124,7 @@ var gizmodisabled = false
 # by gizmodisabled if it's set to true.
 var gizmohidden = false
 # Used when hiding gizmos so their original size can be restored.
-var saved_gizmo_size
+var saved_gizmo_size = -1
 
 var undoredo_disabled = false
 var hadundo = false
@@ -137,7 +133,6 @@ var hadredo = false
 
 # Button added to toolbar for settings like the z key toggle.
 var menu_button: MenuButton
-#var toolbutton_z_up: ToolButton
 
 # Dock added to the UI with plugin settings.
 var control_dock = null
@@ -156,15 +151,11 @@ var spatial_offset: Vector3
 # Offset when changing limit to the normal of the placement plane.
 var saved_offset: float
 
-# Rotation of spatial node on the y axis when placing it on the grid.
-#var spatial_rotation: float
-
 # Normal vector direction of the placement grid of spatial nodes. Plane's distance
 # from the 0 position is in `spatial_offset`.
 var spatial_placement_plane: int = GSRAxis.Y
 
 var grid_mesh = null
-var cross_mesh = null
 
 # Node last selected in the 3d viewport by clicking when using smart select.
 var mouse_select_last = null
@@ -183,6 +174,11 @@ func _enter_tree():
 	Interop.register(self, "gsr")
 	settings.connect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.load_config()
+	
+	saved_gizmo_size = settings.saved_gizmo_size
+	if saved_gizmo_size != -1:
+		UI.set_setting(self, "editors/3d/manipulator_gizmo_size", saved_gizmo_size)
+	
 	add_toolbuttons()
 	add_control_dock()
 	register_callbacks(true)
@@ -192,17 +188,17 @@ func _enter_tree():
 
 
 func _exit_tree():
-	Interop.deregister(self, "gsr")
-	update_smart_select(false)
 	settings.disconnect("snap_settings_changed", self, "_on_snap_settings_changed")
+	settings.saved_gizmo_size = saved_gizmo_size if gizmodisabled || gizmohidden else -1
+	update_smart_select(false)
 	settings.save_config()
 	register_callbacks(false)
 	remove_toolbuttons()
 	# Make sure we don't hold a reference of anything
 	reset()
-#	selected_objects = weakref(null)
 	remove_control_dock()
 	free_meshes()
+	Interop.deregister(self, "gsr")
 
 
 func add_control_dock():
@@ -242,19 +238,6 @@ func add_toolbuttons():
 		UI.spatial_toolbar(self).add_child(menu_button)
 		popup.connect("index_pressed", self, "_on_menu_button_popup_index_pressed")
 			
-#	if toolbutton_z_up == null:
-#		toolbutton_z_up = ToolButton.new()
-#		toolbutton_z_up.toggle_mode = true
-#		toolbutton_z_up.hint_tooltip = "Swap z and y axis lock shortcuts"
-#		toolbutton_z_up.connect("toggled", self, "_on_toolbutton_z_up_toggled")
-#		if UI.is_dark_theme(self):
-#			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
-#		else:
-#			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
-#
-#		toolbutton_z_up.pressed = UI.get_config_property("settings", "z_up", false)
-#		UI.spatial_toolbar(self).add_child(toolbutton_z_up)
-
 
 func _on_menu_button_popup_index_pressed(index: int):
 	var popup = menu_button.get_popup()
@@ -291,35 +274,11 @@ func _on_snap_settings_changed():
 	check_grid()
 
 
-#	if toolbutton_z_up != null:
-#		if toolbutton_z_up.get_parent() != null:
-#			toolbutton_z_up.get_parent().remove_child(toolbutton_z_up)
-#		toolbutton_z_up.free()
-#		toolbutton_z_up = null
-
-
-#func _on_settings_changed():
-#	if menu_button != null:
-#		var popup = menu_button.get_popup()
-##		if UI.is_dark_theme(self):
-##			popup.set_item_icon(0, preload("./icons/icon_z_up.svg"))
-##		else:
-##			popup.set_item_icon(0, preload("./icons/icon_z_up_light.svg"))
-#
-##	if toolbutton_z_up != null:
-##		if UI.is_dark_theme(self):
-##			toolbutton_z_up.icon = preload("./icons/icon_z_up.svg")
-##		else:
-##			toolbutton_z_up.icon = preload("./icons/icon_z_up_light.svg")
-	
-
 func register_callbacks(register: bool):
 	if register:
 		connect("main_screen_changed", self, "_on_main_screen_changed")
-		#UI.connect_settings_changed(self, "_on_settings_changed")
 	else:
 		disconnect("main_screen_changed", self, "_on_main_screen_changed")
-		#UI.disconnect_settings_changed(self, "_on_settings_changed")
 	pass
 
 
@@ -331,10 +290,6 @@ func update_control_dock():
 	control_dock.visible = settings.snap_controls_shown && UI.current_main_screen(self) == "3D"
 
 
-#func _on_toolbutton_z_up_toggled(toggled: bool):
-#	settings.zy_swapped = toggled
-
-
 func handles(object):
 	if object != null:
 		var ei = get_editor_interface()
@@ -342,10 +297,8 @@ func handles(object):
 		var nodes = es.get_transformable_selected_nodes()
 		for n in nodes:
 			if n is Spatial:
-#				selected_objects = weakref(object)
 				return true
 		if object is Spatial:
-#			selected_objects = weakref(object)
 			return true
 
 	return object == null
@@ -1007,7 +960,6 @@ func initialize_scene_placement(camera: Camera, path: String, parent: Spatial):
 	
 	if grid_mesh != null:
 		spatialparent.add_child(grid_mesh)
-		spatialparent.add_child(cross_mesh)
 		
 	#spatialscene.rotate_y(spatial_rotation)
 	
@@ -1037,7 +989,6 @@ func start_scene_manipulation(camera: Camera):
 	
 	if grid_mesh != null:
 		spatialparent.add_child(grid_mesh)
-		spatialparent.add_child(cross_mesh)
 	
 	if spatial_placement_plane != GSRLimit.X:
 		spatial_offset.x = fmod(spatialscene.transform.origin.x + TINY_VALUE, tile_step_size(false))
@@ -1326,7 +1277,6 @@ func update_scene_placement():
 		if point == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
-				cross_mesh.visible = false
 			return
 			
 		point = spatialparent.to_local(point)
@@ -1361,15 +1311,12 @@ func update_scene_placement():
 			spatialscene.transform.origin.z = (place + spatial_offset).z
 			
 		grid_mesh.visible = true
-		cross_mesh.visible = true
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
-		update_cross_position()
 	else:
 		var plane = scene_placement_limited_plane() 
 		if plane == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
-				cross_mesh.visible = false
 			return
 			
 		var point = plane.intersects_ray(Scene.camera_ray_origin(editor_camera, mousepos),
@@ -1377,7 +1324,6 @@ func update_scene_placement():
 		if point == null:
 			if grid_mesh != null:
 				grid_mesh.visible = false
-				cross_mesh.visible = false
 			return
 		
 		point = spatialparent.to_local(point)
@@ -1393,7 +1339,6 @@ func update_scene_placement():
 			spatialscene.transform.origin.z = place.z
 			
 		grid_mesh.visible = true
-		cross_mesh.visible = true
 		update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
 		
 	selection_center = spatialscene.global_transform.origin
@@ -1470,8 +1415,6 @@ func reset_scene_action():
 			spatialscene.transform = grid_start_transform
 	if grid_mesh != null && grid_mesh.get_parent() != null:
 		grid_mesh.get_parent().remove_child(grid_mesh)
-	if cross_mesh != null && cross_mesh.get_parent() != null:
-		cross_mesh.get_parent().remove_child(cross_mesh)
 
 
 func apply_manipulation():
@@ -1840,14 +1783,11 @@ func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector
 
 func generate_meshes():
 	grid_mesh = GridMesh.new(self)
-	cross_mesh = CrossMesh.new(self)
 
 
 func free_meshes():
 	grid_mesh.free()
 	grid_mesh = null
-	cross_mesh.free()
-	cross_mesh = null
 
 
 func check_grid():
@@ -1855,7 +1795,6 @@ func check_grid():
 		generate_meshes()
 	else:
 		grid_mesh.update()
-		cross_mesh.update()
 
 
 # Rotate spatial placement grid based on placement plane. When rotation is 0, the
@@ -1874,11 +1813,6 @@ func update_grid_rotation():
 
 func update_grid_position(center):
 	grid_mesh.transform.origin = center
-
-
-func update_cross_position():
-	cross_mesh.transform.origin = spatialscene.transform.origin
-	cross_mesh.rotation = spatialscene.rotation
 
 
 func update_smart_select(turn_on):

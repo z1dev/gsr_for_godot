@@ -41,6 +41,11 @@ var snap_presets = []
 # Preset last selected in the settings panel
 var selected_snap_preset = -1
 
+# Used when hiding gizmos so their original size can be restored. It's a setting
+# because it needs to be restored as Godot doesn't notify us on close in time
+# to be restored when the plugin quits.
+var saved_gizmo_size = -1
+
 func load_config():
 	var config := UI.load_config("user://gsr.cfg")
 	
@@ -55,6 +60,10 @@ func load_config():
 	if section != null:
 		grid_size = section.get("grid_size", 1.0)
 		grid_subdiv = section.get("grid_subdiv", 10)
+	
+	section = config.get("editor")
+	if section != null:
+		saved_gizmo_size = section.get("saved_gizmo_size", -1)
 	
 	section = config.get("snap_presets")
 	var presets = {}
@@ -84,7 +93,8 @@ func load_config():
 func save_config():
 	var config = { "settings" : { "z_up" : zy_swapped, "snap_preset" : selected_snap_preset,
 					"snap_controls_shown" : snap_controls_shown, "smart_select" : smart_select },
-			"grid" : { "grid_size" : grid_size, "grid_subdiv" : grid_subdiv } }
+			"grid" : { "grid_size" : grid_size, "grid_subdiv" : grid_subdiv },
+			"editor" : { "saved_gizmo_size" : saved_gizmo_size } }
 	
 	var presets = {}
 	for ix in snap_presets.size():

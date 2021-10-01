@@ -39,7 +39,7 @@ func create_material():
 	mat.flags_transparent = true
 	#mat.flags_vertex_lighting = true
 	mat.distance_fade_mode = SpatialMaterial.DISTANCE_FADE_PIXEL_ALPHA
-	mat.distance_fade_min_distance = 135.5
+	mat.distance_fade_min_distance = 80
 	mat.distance_fade_max_distance = 0.0
 	mat.vertex_color_use_as_albedo = true
 	#mat.albedo_color = Color(0.8, 0.8, 0.6, 0.8)
