@@ -217,10 +217,10 @@ func _exit_tree():
 	reset()
 	remove_control_dock()
 	free_meshes()
-	Interop.deregister(self, "gsr")
+	Interop.deregister(self)
 
 
-func _interop_notification(plugin: EditorPlugin, code, args):
+func _interop_notification(caller_plugin_id: String, code: int, id: String, args):
 	match code:
 		Interop.NOTIFY_REQUEST_IGNORE_INPUT:
 			interop_ignore_input = true
