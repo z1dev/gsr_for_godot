@@ -222,9 +222,9 @@ func _exit_tree():
 
 func _interop_notification(caller_plugin_id: String, code: int, id: String, args):
 	match code:
-		Interop.NOTIFY_REQUEST_IGNORE_INPUT:
+		Interop.NOTIFY_CODE_REQUEST_IGNORE_INPUT:
 			interop_ignore_input = true
-		Interop.NOTIFY_ALLOW_INPUT:
+		Interop.NOTIFY_CODE_ALLOW_INPUT:
 			interop_ignore_input = false
 
 
