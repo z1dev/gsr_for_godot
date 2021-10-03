@@ -198,9 +198,11 @@ func _enter_tree():
 	es.connect("selection_changed", self, "_on_editor_selection_changed")
 	var local_button: ToolButton = UI.spatial_use_local_toolbutton(self)
 	local_button.connect("toggled", self, "_on_local_button_toggled")
+	get_undo_redo().connect("version_changed", self, "_on_undo_redo")
 
 
 func _exit_tree():
+	get_undo_redo().disconnect("version_changed", self, "_on_undo_redo")
 	var local_button: ToolButton = UI.spatial_use_local_toolbutton(self)
 	local_button.disconnect("toggled", self, "_on_local_button_toggled")
 	
@@ -349,7 +351,13 @@ func make_visible(visible):
 	if !visible:
 		show_gizmo()
 		enable_undoredo()
-	cancel_manipulation()
+		
+	if cross_mesh != null:
+		cross_mesh.visible = false
+
+
+func _on_undo_redo():
+	update_cross_transform()
 
 
 # Whether the button to use local space by default is pressed. After I figured it
@@ -1874,10 +1882,22 @@ func update_grid_position(center):
 
 
 func update_cross_transform():
+	if cross_mesh == null:
+		return
+	
 	if cross_mesh.get_parent() == null && get_editor_interface().get_edited_scene_root() != null:
 		get_editor_interface().get_edited_scene_root().add_child(cross_mesh)
 
-	cross_mesh.visible = ((gizmo_spatials != null && !gizmo_spatials.empty()) || spatialscene != null) && (gizmodisabled || gizmohidden)
+	var valid_spatials = spatialscene != null || (gizmo_spatials != null && !gizmo_spatials.empty())
+	if valid_spatials && spatialscene == null:
+		for s in gizmo_spatials:
+			if !is_instance_valid(s) || s.get_parent() == null:
+				valid_spatials = false
+				break
+
+	cross_mesh.visible = valid_spatials && ((gizmo_spatials != null && !gizmo_spatials.empty()) || spatialscene != null) && (gizmodisabled || gizmohidden)
+	if !valid_spatials:
+		return
 
 
 	var position: Vector3
