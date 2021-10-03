@@ -29,7 +29,10 @@ const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 
 const TINY_VALUE = 0.0001
-
+# Minimum number of pixels, the mouse has to be away from the selection center
+# when a scale manipulation starts. If the mouse is closer than this, a position
+# this far from the center will be used.
+const MINIMUM_MANIPULATION_MOUSE_DISTANCE = 10
 
 const mouse_button_map = [BUTTON_LEFT, BUTTON_RIGHT, BUTTON_MIDDLE, BUTTON_XBUTTON1, BUTTON_XBUTTON2]
 const mouse_button_mask = [BUTTON_MASK_LEFT, BUTTON_MASK_RIGHT, BUTTON_MASK_MIDDLE, BUTTON_MASK_XBUTTON1, BUTTON_MASK_XBUTTON2]
@@ -1200,8 +1203,16 @@ func initialize_manipulation(spatials):
 	selection_center = calculate_global_center(selection)
 		
 	selection_centerpos = Scene.unproject(editor_camera, selection_center)
+	
+	if get_current_action() == GSRAction.SCALE || get_current_action() == GSRAction.ROTATE:
+		if (selection_centerpos.distance_to(start_mousepos) < MINIMUM_MANIPULATION_MOUSE_DISTANCE):
+			if selection_centerpos == start_mousepos:
+				start_mousepos = selection_centerpos + Vector2(MINIMUM_MANIPULATION_MOUSE_DISTANCE, 0)
+			elif get_current_action() == GSRAction.SCALE:
+				start_mousepos = selection_centerpos + ((start_mousepos - selection_centerpos).normalized() * MINIMUM_MANIPULATION_MOUSE_DISTANCE)
+	
 	selection_distance = selection_center.distance_to(Scene.camera_ray_origin(editor_camera, selection_centerpos))
-	start_viewpoint = editor_camera.project_position(mousepos, selection_distance)
+	start_viewpoint = editor_camera.project_position(start_mousepos, selection_distance)
 	
 	update_overlays()
 
