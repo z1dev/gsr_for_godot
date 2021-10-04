@@ -692,6 +692,10 @@ func forward_spatial_gui_input(camera, event):
 				mouse_button_pressed &= ~mouse_button_mask[button_index]
 			
 		if action != GSRAction.NONE:
+			if (event.button_index in [BUTTON_WHEEL_UP, BUTTON_WHEEL_DOWN] &&
+					get_current_action() in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]):
+				return true
+			
 			if !event.pressed:
 				return
 				
@@ -748,6 +752,8 @@ func forward_spatial_gui_input(camera, event):
 		elif get_current_action() != GSRAction.NONE:
 			if numerics.empty():
 				manipulate_selection()
+			else:
+				update_overlays()
 				
 		saved_mousepos = mousepos
 		return action != GSRAction.NONE
@@ -1676,7 +1682,7 @@ func apply_manipulation():
 			var snapstep = rotate_step_size()
 			rotate_display = stepify(rad2deg(rotate_angle), snapstep)
 		else:
-			rotate_display = rad2deg(constant if constant != null else rotate_angle) 
+			rotate_display = constant if constant != null else rad2deg(rotate_angle) 
 		
 		for ix in selection.size():
 			if limit == GSRLimit.NONE:
