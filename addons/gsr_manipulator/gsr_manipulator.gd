@@ -53,7 +53,7 @@ enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
 enum GSRAxis {X = 1, Y = 2, Z = 4}
 
 # Objects manipulated by this plugin are selected.
-var selected := false
+var selected: bool = false
 
 # When set, the transform used to limit manipulation to an axis, instead of using the global axis
 # for rotation or scale axis.
@@ -87,11 +87,14 @@ var external_allowed_actions = {}
 
 # String parameter passed to external_request_manipulation()
 var external_what: String
+# Objects passed to external_request_manipulation() to manipulate.
+var external_objects: Array
 # Caller plugin passed to external_request_manipulation()
 var external_caller = null
 # Caller plugin callback function passed to external_request_manipulation()
 var external_callback: String
-
+# Saved value of selected before getting an external request.
+var external_selected: bool = false
 
 # Spatial nodes used for displaying a fake gizmo. Doesn't have the functionality
 # of gizmos, just used for displaying the center of selection.
@@ -220,6 +223,7 @@ func _enter_tree():
 	var local_button: ToolButton = UI.spatial_use_local_toolbutton(self)
 	local_button.connect("toggled", self, "_on_local_button_toggled")
 	get_undo_redo().connect("version_changed", self, "_on_undo_redo")
+	set_input_event_forwarding_always_enabled()
 
 
 func _exit_tree():
@@ -365,7 +369,7 @@ func handles(object):
 
 
 func make_visible(visible):
-	if selected == visible:
+	if external_action || selected == visible:
 		return
 		
 	selected = visible
@@ -544,6 +548,15 @@ func forward_spatial_gui_input(camera, event):
 	if !external_action && interop_ignore_input:
 		if event is InputEventMouseMotion:
 			mousepos = current_camera_position(event, camera)		
+		if event is InputEventMouseButton:
+				# Storing pressed mouse button index helps preventing clashes with
+				# Godot functionality like free look.
+				var button_index = mouse_button_map.find(event.button_index)
+				if button_index != -1:
+					if event.pressed:
+						mouse_button_pressed |= mouse_button_mask[button_index]
+					else:
+						mouse_button_pressed &= ~mouse_button_mask[button_index]
 		return false
 		
 	if last_input_event_id == event.get_instance_id():
@@ -570,14 +583,6 @@ func forward_spatial_gui_input(camera, event):
 			return true
 		if !event.pressed:
 			return false
-		if selected && char(event.unicode) == 'g':
-			if external_action && !external_allowed_actions.has(GSRAction.GRAB):
-				return false
-			if action in [GSRAction.GRAB, GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-				return false
-			start_manipulation(camera, GSRAction.GRAB)
-			saved_mousepos = mousepos
-			return true
 		if selected && char(event.unicode) == 'm':
 			if external_action:
 				return false
@@ -586,14 +591,24 @@ func forward_spatial_gui_input(camera, event):
 			if action in [GSRAction.GRAB, GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
 				return false
 			start_scene_manipulation(camera)
-		elif char(event.unicode) == 'r' && ((selected && action != GSRAction.ROTATE) || action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
+		elif selected && char(event.unicode) == 'g' && action != GSRAction.GRAB:
+			if external_action && !external_allowed_actions.has(GSRAction.GRAB):
+				return false
+			if action in [GSRAction.GRAB, GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
+				return false
+			start_manipulation(camera, GSRAction.GRAB)
+			saved_mousepos = mousepos
+			return true
+		elif char(event.unicode) == 'r' && action != GSRAction.ROTATE && (selected || action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
+			if external_action && !external_allowed_actions.has(GSRAction.ROTATE):
+				return false
 			if action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
 				change_scene_manipulation(GSRAction.ROTATE if active_action != GSRAction.ROTATE else GSRAction.NONE)
 			else:
 				start_manipulation(camera, GSRAction.ROTATE)
 			saved_mousepos = mousepos
 			return true
-		elif char(event.unicode) == 's' && ((selected && action != GSRAction.SCALE) || action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
+		elif char(event.unicode) == 's' && action != GSRAction.SCALE && (selected || action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
 			if external_action && !external_allowed_actions.has(GSRAction.SCALE):
 				return false
 			if action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
@@ -615,6 +630,7 @@ func forward_spatial_gui_input(camera, event):
 			saved_mousepos = mousepos
 			return true
 		elif event.scancode == KEY_ESCAPE:
+			external_cancel()
 			cancel_manipulation()
 			return true
 		elif get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
@@ -684,6 +700,7 @@ func forward_spatial_gui_input(camera, event):
 					assert(!external_action, "External action is not allowed to do scene placement")
 					cancel_scene_limit()
 				else:
+					external_cancel()
 					cancel_manipulation()
 				return true
 			elif event.button_index == BUTTON_LEFT:
@@ -728,7 +745,6 @@ func forward_spatial_gui_input(camera, event):
 			saved_mousepos = mousepos
 			# Returning true here would prevent navigating the 3D view.
 			return false
-			
 		elif get_current_action() != GSRAction.NONE:
 			if numerics.empty():
 				manipulate_selection()
@@ -1132,6 +1148,8 @@ func external_request_manipulation(camera: Camera, what: String, obj, caller_obj
 	
 	cancel_manipulation(true)
 	
+	saved_mousepos = mousepos
+	external_objects = obj
 	external_action = true
 	external_what = what
 	external_caller = caller_object
@@ -1139,6 +1157,8 @@ func external_request_manipulation(camera: Camera, what: String, obj, caller_obj
 	editor_camera = camera
 	action = main_action
 	local = is_local_button_down()
+	external_selected = selected
+	selected = true
 	
 	hide_gizmo()
 	disable_undoredo()
@@ -1161,6 +1181,9 @@ func change_scene_manipulation(newaction):
 
 
 func start_manipulation(camera: Camera, newaction):
+	if action == newaction:
+		return
+		
 	interop_work = "gsr_transform"
 	Interop.start_work(self, interop_work)
 
@@ -1172,14 +1195,17 @@ func start_manipulation(camera: Camera, newaction):
 	action = newaction
 	local = is_local_button_down()
 	
-	var ei = get_editor_interface()
-	var es = ei.get_selection()
-	
 	var spatials = []
-	var objects = es.get_transformable_selected_nodes()
-	for obj in objects:
-		if obj is Spatial:
-			spatials.append(obj)
+	if !external_action:
+		var ei = get_editor_interface()
+		var es = ei.get_selection()
+		
+		var objects = es.get_transformable_selected_nodes()
+		for obj in objects:
+			if obj is Spatial:
+				spatials.append(obj)
+	else:
+		spatials = external_objects
 	
 	if spatials.empty():
 		reset()
@@ -1828,6 +1854,13 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 	return [v1.normalized(), v2.normalized()]
 
 
+func external_cancel():
+	if !external_action || !(action in [GSRAction.GRAB, GSRAction.ROTATE, GSRAction.SCALE]):
+		return
+	external_caller.call(external_callback, external_what, false, null)
+	external_reset()
+	
+
 # Cancels ongoing manipulation and grid snapping action, restoring old transform of involved
 # spatials. If full_cancel is false and a spatial is being rotated/scaled inside the grid, only
 # the rotation/scale is cancelled, not the grid action. Otherwise both are cancelled.
@@ -1863,7 +1896,7 @@ func finalize_manipulation():
 			ur.commit_action()
 		else:
 			external_caller.call(external_callback, external_what, true, selection_final_state)
-			external_action = false
+			external_reset()
 	
 	reset(active_action == GSRAction.NONE)
 
@@ -1887,10 +1920,6 @@ func reset(full_reset = true):
 		show_gizmo()
 		enable_undoredo()
 		
-		if external_action:
-			external_caller.call(external_callback, external_what, false, null)
-			
-		external_action = false
 		editor_camera = null
 
 	# Values reset for every action.
@@ -1915,6 +1944,17 @@ func reset(full_reset = true):
 		Interop.end_work(self, interop_work)
 		
 	interop_work = ""
+
+
+func external_reset():
+	external_action = false
+	external_objects = []
+	external_allowed_actions = {}
+
+	external_what = String()
+	external_caller = null
+	external_callback = String()
+	selected = external_selected
 
 
 func offset_object(index: int, movedby: Vector3):
