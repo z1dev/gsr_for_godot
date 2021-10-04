@@ -377,8 +377,8 @@ func make_visible(visible):
 		show_gizmo()
 		enable_undoredo()
 		
-	if cross_mesh != null:
-		cross_mesh.visible = false
+	if cross_mesh != null && cross_mesh.get_parent() != null:
+		cross_mesh.get_parent().remove_child(cross_mesh)
 
 
 func _on_undo_redo():
@@ -1522,7 +1522,6 @@ func update_scene_placement():
 			
 	grid_mesh.visible = true
 	update_grid_position(spatialscene.transform.origin - vector_exclude_plane(spatial_offset, spatial_placement_plane))
-	#update_cross_position(spatialscene.global_transform.origin)
 	update_cross_transform()
 		
 	selection_center = spatialscene.global_transform.origin
@@ -2035,8 +2034,18 @@ func update_cross_transform():
 	if cross_mesh == null:
 		return
 	
-	if cross_mesh.get_parent() == null && get_editor_interface().get_edited_scene_root() != null:
-		get_editor_interface().get_edited_scene_root().add_child(cross_mesh)
+	# The user might switch between scenes or close a scene. The cross mesh should be
+	# attached to the new scene and the gizmos fetched again.
+	var scene_root = get_editor_interface().get_edited_scene_root()
+	if cross_mesh.get_parent() == null || cross_mesh.get_parent() != scene_root:
+		if cross_mesh.get_parent() != null:
+			cross_mesh.get_parent().remove_child(cross_mesh)
+		if scene_root != null:
+			scene_root.add_child(cross_mesh)
+			gizmo_spatials = get_editor_interface().get_selection().get_transformable_selected_nodes()
+		else:
+			gizmo_spatials = []
+			return
 
 	var valid_spatials = spatialscene != null || (gizmo_spatials != null && !gizmo_spatials.empty())
 	if valid_spatials && spatialscene == null:
@@ -2046,9 +2055,10 @@ func update_cross_transform():
 				break
 
 	cross_mesh.visible = valid_spatials && ((gizmo_spatials != null && !gizmo_spatials.empty()) || spatialscene != null) && (gizmodisabled || gizmohidden)
-	if !valid_spatials:
+	#if !valid_spatials:
+	if !cross_mesh.visible:
+		cross_mesh.get_parent().remove_child(cross_mesh)
 		return
-
 
 	var position: Vector3
 	var xvec: Vector3
