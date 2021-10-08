@@ -46,7 +46,8 @@ var settings: PluginSettings = PluginSettings.new()
 
 
 # Current manipulation of objects
-enum GSRAction { NONE, GRAB, ROTATE, SCALE, SCENE_PLACE, SCENE_MOVE }
+enum GSRState { NONE, MANIPULATE, EXTERNAL_MANIPULATE, DUPLICATE, GRID_ADD, GRID_MOVE }
+enum GSRAction { NONE, GRAB, SCALE, ROTATE }
 # Axis of manipulation
 enum GSRLimit { NONE, X = 1, Y = 2, Z = 4, REVERSE = 8 }
 # Spatial "tile" placement plane's floor normal.
@@ -60,11 +61,11 @@ var selected: bool = false
 var limit_transform = null
 
 # Manipulation method used from GSRAction values. Doesn't necessarily match the active method.
-var action: int = GSRAction.NONE
+var gsrstate: int = GSRState.NONE
 # The currently used manipulation of spatials. This can be different from `action`, if it's
 # temporarily switched to a different one. Cancelling or accepting the manipulation will
 # return to the original action setting this to GSRAction.NONE.
-var active_action: int = GSRAction.NONE
+var gsraction: int = GSRAction.NONE
 # Axis of manipulation from GSRLimit
 var limit: int = 0
 # Objects being manipulated. Not the same as current selection, because this is
@@ -79,16 +80,12 @@ var interop_ignore_input := false
 # String id of the work taking place to broadcast through interop.
 var interop_work: String = ""
 
-# Whether the current object manipulation was requested by an external plugin.
-var external_action = false
 # Only used during external action. List of actions that can be activated during
 # the external action.
 var external_allowed_actions = {}
 
 # String parameter passed to external_request_manipulation()
 var external_what: String
-# Objects passed to external_request_manipulation() to manipulate.
-var external_objects: Array
 # Caller plugin passed to external_request_manipulation()
 var external_caller = null
 # Caller plugin callback function passed to external_request_manipulation()
@@ -117,13 +114,12 @@ var selection_center: Vector3
 var selection_centerpos: Vector2
 # Position of mouse when manipulation started
 var start_mousepos: Vector2
+# Mouse position saved for calculating relative rotation.
+var rotate_mousepos: Vector2
 # Position in the viewport when manipulation starts. Computed from mousepos.
 var start_viewpoint: Vector3
 # Current mouse position
 var mousepos: Vector2
-# Used while manipulating objects to know the mouse position one step before the
-# current mouse position.
-var saved_mousepos: Vector2
 # Distance of selection from the editor camera's plane.
 var selection_distance := 0.0
 # The transform of each selected object when manipulation started, so it can
@@ -132,8 +128,10 @@ var selection_distance := 0.0
 var start_transform := []
 # The global transform of each selected object when manipulation started.
 var start_global_transform := []
-# Same as start_transform but for scene grid snapping.
-var grid_start_transform = null
+# Array of transforms of the spatial moved during grid placement for undo-redo.
+var grid_transforms = []
+# Index in grid_transforms of current applied transformation to use in undo-redo.
+var grid_undo_pos = -1
 
 # Used when rotating to know the angle the selection was rotated by. This can be
 # multiple times a full circle.
@@ -369,7 +367,7 @@ func handles(object):
 
 
 func make_visible(visible):
-	if external_action || selected == visible:
+	if gsrstate == GSRState.EXTERNAL_MANIPULATE || selected == visible:
 		return
 		
 	selected = visible
@@ -501,7 +499,6 @@ func disable_undoredo():
 	hadredo = UI.is_redo_enabled(self)
 	UI.disable_undoredo(self, hadundo, hadredo)
 	undoredo_disabled = true
-	#print("undo disabled")
 
 
 func enable_undoredo():
@@ -509,7 +506,6 @@ func enable_undoredo():
 		return
 	UI.enable_undoredo(self, hadundo, hadredo)
 	undoredo_disabled = false
-	#print("redo disabled")
 
 
 func draw_line_dotted(control: CanvasItem, from: Vector2, to: Vector2, dot_len: float, space_len: float, color: Color, width: float = 1.0, antialiased: bool = false):
@@ -532,10 +528,8 @@ func draw_line_dotted(control: CanvasItem, from: Vector2, to: Vector2, dot_len: 
 var mousepos_offset := Vector2.ZERO
 var reference_mousepos := Vector2.ZERO
 
-
 func manipulation_mousepos() -> Vector2:
 	return (mousepos - reference_mousepos) * get_action_strength() + mousepos_offset
-
 
 func save_manipulation_mousepos():
 	mousepos_offset += (mousepos - reference_mousepos) * get_action_strength()
@@ -545,7 +539,9 @@ func save_manipulation_mousepos():
 # Getting around an issue (bug?) in Godot that sends the same input event twice.
 var last_input_event_id = 0
 func forward_spatial_gui_input(camera, event):
-	if !external_action && interop_ignore_input:
+	if interop_ignore_input && gsrstate != GSRState.EXTERNAL_MANIPULATE:
+		# Asked to not react to input from other plugins.
+		
 		if event is InputEventMouseMotion:
 			mousepos = current_camera_position(event, camera)		
 		if event is InputEventMouseButton:
@@ -559,6 +555,7 @@ func forward_spatial_gui_input(camera, event):
 						mouse_button_pressed &= ~mouse_button_mask[button_index]
 		return false
 		
+	# Getting around an issue (bug?) in Godot that sends the same input event twice.
 	if last_input_event_id == event.get_instance_id():
 		return true
 	last_input_event_id = event.get_instance_id()
@@ -569,73 +566,96 @@ func forward_spatial_gui_input(camera, event):
 		
 		if event.echo:
 			return false
-			
+		
 		if event.scancode == KEY_SHIFT:
-			if action == GSRAction.NONE:
+			if gsraction == GSRAction.NONE:
 				return false
 			save_manipulation_mousepos()
 			smoothing = event.pressed
 			return true
 		elif event.scancode == KEY_CONTROL:
-			if action == GSRAction.NONE:
+			if gsraction == GSRAction.NONE:
 				return false
 			snap_toggle = event.pressed
 			return true
 		if !event.pressed:
 			return false
-		if selected && char(event.unicode) == 'm':
-			if external_action:
+		if selected && char(event.unicode) == 'g':
+			if (gsraction == GSRAction.GRAB ||
+					(gsrstate == GSRState.EXTERNAL_MANIPULATE && !external_allowed_actions.has(GSRAction.GRAB))):
 				return false
-			if get_current_action() != GSRAction.NONE:
-				change_scene_manipulation(GSRAction.NONE)
-			if action in [GSRAction.GRAB, GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-				return false
-			start_scene_manipulation(camera)
-		elif selected && char(event.unicode) == 'g' && action != GSRAction.GRAB:
-			if external_action && !external_allowed_actions.has(GSRAction.GRAB):
-				return false
-			if action in [GSRAction.GRAB, GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-				return false
-			start_manipulation(camera, GSRAction.GRAB)
-			saved_mousepos = mousepos
+			if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
+				change_scene_manipulation(GSRAction.GRAB)
+			elif gsrstate in [GSRState.MANIPULATE, GSRState.EXTERNAL_MANIPULATE, GSRState.DUPLICATE]:
+				change_manipulation(GSRAction.GRAB)
+			else:
+				start_manipulation(camera, GSRAction.GRAB)
 			return true
-		elif char(event.unicode) == 'r' && action != GSRAction.ROTATE && (selected || action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
-			if external_action && !external_allowed_actions.has(GSRAction.ROTATE):
+		elif selected && char(event.unicode) == 'D':
+			if gsraction != GSRAction.NONE:
 				return false
-			if action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-				change_scene_manipulation(GSRAction.ROTATE if active_action != GSRAction.ROTATE else GSRAction.NONE)
+			start_duplication(camera)
+			return true
+		elif char(event.unicode) == 'r':
+			if ((!selected && !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE])) ||
+					gsrstate == GSRState.EXTERNAL_MANIPULATE && !external_allowed_actions.has(GSRAction.ROTATE)):
+				return false
+			if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
+				change_scene_manipulation(GSRAction.ROTATE if gsraction != GSRAction.ROTATE else GSRAction.GRAB)
+			elif gsrstate in [GSRState.MANIPULATE, GSRState.EXTERNAL_MANIPULATE, GSRState.DUPLICATE]:
+				change_manipulation(GSRAction.ROTATE)
 			else:
 				start_manipulation(camera, GSRAction.ROTATE)
-			saved_mousepos = mousepos
 			return true
-		elif char(event.unicode) == 's' && action != GSRAction.SCALE && (selected || action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
-			if external_action && !external_allowed_actions.has(GSRAction.SCALE):
+		elif char(event.unicode) == 's':
+			if ((!selected && !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE])) ||
+					gsrstate == GSRState.EXTERNAL_MANIPULATE && !external_allowed_actions.has(GSRAction.SCALE)):
 				return false
-			if action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-				change_scene_manipulation(GSRAction.SCALE if active_action != GSRAction.SCALE else GSRAction.NONE)
+			if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
+				change_scene_manipulation(GSRAction.SCALE if gsraction != GSRAction.SCALE else GSRAction.GRAB)
+			elif gsrstate in [GSRState.MANIPULATE, GSRState.EXTERNAL_MANIPULATE, GSRState.DUPLICATE]:
+				change_manipulation(GSRAction.SCALE)
 			else:
 				start_manipulation(camera, GSRAction.SCALE)
-			saved_mousepos = mousepos
 			return true
-		elif !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]) && char(event.unicode) == 'a':
-			if external_action:
+		elif char(event.unicode) == 'a':
+			if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE, GSRState.EXTERNAL_MANIPULATE, GSRState.DUPLICATE]:
 				return false
 			start_scene_placement(camera)
-			saved_mousepos = mousepos
 			return true
-		elif !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]) && char(event.unicode) == 'd':
-			if external_action:
+		elif char(event.unicode) == 'd':
+			if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE, GSRState.EXTERNAL_MANIPULATE, GSRState.DUPLICATE]:
 				return false
 			start_duplicate_placement(camera)
-			saved_mousepos = mousepos
 			return true
+		elif selected && char(event.unicode) == 'm':
+			if gsrstate in [GSRState.GRID_ADD, GSRState.EXTERNAL_MANIPULATE, GSRState.DUPLICATE] || gsraction == GSRAction.GRAB:
+				return false
+			if gsrstate in [GSRState.GRID_MOVE]:
+				change_scene_manipulation(GSRAction.GRAB)
+			else:
+				start_scene_manipulation(camera)
+			return false
 		elif event.scancode == KEY_ESCAPE:
-			external_cancel()
-			cancel_manipulation()
+			input_cancel()
 			return true
-		elif get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-			assert(!external_action, "External action is not allowed to do scene placement")
-			if (char(event.unicode) == 'x' || char(event.unicode) == 'X'):
+		elif gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE] && gsraction == GSRAction.GRAB:
+			if event.scancode == KEY_ENTER || event.scancode == KEY_KP_ENTER:
+				input_accept()
+				return true
+			if event.scancode == KEY_Z && event.control && event.shift:
+				if grid_undo_pos < grid_transforms.size() - 1:
+					grid_undo_pos += 1
+					var o = spatialscene.transform.origin
+					spatialscene.transform = grid_transforms[grid_undo_pos]
+					spatialscene.transform.origin = o
+			elif event.scancode == KEY_Z && event.control:
+				if grid_undo_pos > 0:
+					grid_undo_pos -= 1
+					var o = spatialscene.transform.origin
+					spatialscene.transform = grid_transforms[grid_undo_pos]
+					spatialscene.transform.origin = o
+			elif (char(event.unicode) == 'x' || char(event.unicode) == 'X'):
 				if spatial_placement_plane == GSRAxis.X:
 					change_scene_limit(GSRLimit.X)
 				else:
@@ -653,10 +673,10 @@ func forward_spatial_gui_input(camera, event):
 				else:
 					change_scene_plane(GSRAxis.Z)
 			return true
-		elif action != GSRAction.NONE:
+		elif gsraction in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]:
 			var newlimit = 0
 			if event.scancode == KEY_ENTER || event.scancode == KEY_KP_ENTER:
-				finalize_manipulation()
+				input_accept()
 				return true
 			elif char(event.unicode) == 'x' || char(event.unicode) == 'X':
 				change_limit(GSRLimit.X | (GSRLimit.REVERSE if event.shift else 0))
@@ -691,34 +711,21 @@ func forward_spatial_gui_input(camera, event):
 			else:
 				mouse_button_pressed &= ~mouse_button_mask[button_index]
 			
-		if action != GSRAction.NONE:
-			if (event.button_index in [BUTTON_WHEEL_UP, BUTTON_WHEEL_DOWN] &&
-					get_current_action() in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]):
+		if gsraction != GSRAction.NONE:
+			if event.button_index in [BUTTON_WHEEL_UP, BUTTON_WHEEL_DOWN] && !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]):
 				return true
 			
 			if !event.pressed:
 				return
 				
 			if event.button_index == BUTTON_RIGHT:
-				if get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE] && limit == spatial_placement_plane:
-					assert(!external_action, "External action is not allowed to do scene placement")
-					cancel_scene_limit()
-				else:
-					external_cancel()
-					cancel_manipulation()
+				input_cancel()
 				return true
 			elif event.button_index == BUTTON_LEFT:
-				if get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-					assert(!external_action, "External action is not allowed to do scene placement")
-					if limit == spatial_placement_plane:
-						change_scene_limit(limit)
-					else:
-						finalize_scene_placement()
-				else:
-					finalize_manipulation()
+				input_accept()
 				return true
 		else:
-			assert(!external_action, "External action is not allowed when action is NONE")
+			assert(gsrstate != GSRState.EXTERNAL_MANIPULATE, "External action is not allowed when action is NONE")
 			if event.pressed && event.button_index == BUTTON_LEFT && settings.smart_select:
 				if event.shift:
 					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos)
@@ -738,28 +745,51 @@ func forward_spatial_gui_input(camera, event):
 					
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
-		if action == GSRAction.NONE:
-			assert(!external_action, "External action is not allowed when action is NONE")
-			saved_mousepos = mousepos
+		if gsraction == GSRAction.NONE:
+			assert(gsrstate != GSRState.EXTERNAL_MANIPULATE, "External action is not allowed when action is NONE")
 			return false
 		
-		if get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
-			assert(!external_action, "External action is not allowed to do scene placement")
+		if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE] && gsraction == GSRAction.GRAB:
 			update_scene_placement()
-			saved_mousepos = mousepos
 			# Returning true here would prevent navigating the 3D view.
 			return false
-		elif get_current_action() != GSRAction.NONE:
+		elif gsraction != GSRAction.NONE:
 			if numerics.empty():
 				manipulate_selection()
 			else:
 				update_overlays()
 				
-		saved_mousepos = mousepos
-		return action != GSRAction.NONE
+		return gsraction != GSRAction.NONE
 			
 	return false
 
+
+# User pressed esc or right clicked to cancel manipulations.
+func input_cancel():
+	if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
+		if gsraction == GSRAction.GRAB && limit == spatial_placement_plane:
+			cancel_scene_limit()
+		elif gsraction != GSRAction.GRAB:
+			change_scene_manipulation(GSRAction.NONE)
+		else:
+			cancel_manipulation()
+	else:
+		external_cancel()
+		cancel_manipulation()
+	
+
+# User pressed enter or clicked with left mouse button to accept the manipulation.
+func input_accept():
+	if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
+		if gsraction in [GSRAction.SCALE, GSRAction.ROTATE]:
+			change_scene_manipulation(GSRAction.GRAB)
+		elif limit == spatial_placement_plane:
+			change_scene_limit(limit)
+		else:
+			finalize_scene_placement()
+	else:
+		finalize_manipulation()
+	
 
 # Returns the screen position of event relative to editor_camera instead of the
 # camera, which the event corresponds
@@ -776,22 +806,23 @@ func forward_spatial_draw_over_viewport(overlay: Control):
 	if !is_instance_valid(editor_camera) || overlay_camera != editor_camera:
 		return
 		
-	if action == GSRAction.NONE:
+	if gsraction == GSRAction.NONE:
 		return
 		
 	var f = overlay.get_font("font")
 	var text: String
 	
-	if get_current_action() == GSRAction.GRAB:
-		text = "[Grab]"
-	elif get_current_action() == GSRAction.ROTATE:
+	if gsraction == GSRAction.GRAB:
+		if gsrstate == GSRState.GRID_ADD:
+			text = "[Grid Add]"
+		elif gsrstate == GSRState.GRID_MOVE:
+			text = "[Grid Move]"
+		else:
+			text = "[Grab]"
+	elif gsraction == GSRAction.ROTATE:
 		text = "[Rotate]"
-	elif get_current_action() == GSRAction.SCALE:
+	elif gsraction == GSRAction.SCALE:
 		text = "[Scale]"
-	elif get_current_action() == GSRAction.SCENE_PLACE:
-		text = "[Grid Add]"
-	elif get_current_action() == GSRAction.SCENE_MOVE:
-		text = "[Grid Move]"
 	
 	if limit == GSRLimit.X:
 		text += " X axis"
@@ -809,19 +840,7 @@ func forward_spatial_draw_over_viewport(overlay: Control):
 	if !numerics.empty():
 		text += "  Input: " + numerics
 
-	if get_current_action() == GSRAction.GRAB:
-		# The new center of selection, to calculate distance moved
-		var center = Vector3.ZERO
-		for ix in selection.size():
-			center += selection[ix].global_transform.origin
-		center /= selection.size()
-		var dist = center - selection_center
-		text += "  Distance: %.4f  Dx: %.4f  Dy: %.4f  Dz: %.4f" % [dist.length(), dist.x, dist.y, dist.z]
-	elif get_current_action() == GSRAction.ROTATE:
-		text += "  Deg: %.2f°" % [rotate_display]
-	elif get_current_action() == GSRAction.SCALE:
-		text += "  Scale: %.2f%%  Sx: %.4f  Sy: %.4f  Sz: %.4f" % [scale_display, scale_axis_display.x, scale_axis_display.y, scale_axis_display.z]
-	elif get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
+	if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE] && gsraction == GSRAction.GRAB:
 		text += "  Coords: (%.2f, %.2f, %.2f)" % [spatialscene.transform.origin.x, spatialscene.transform.origin.y, spatialscene.transform.origin.z]
 		var cell = Vector3(int((abs(spatialscene.transform.origin.x) + TINY_VALUE) / settings.grid_size),
 				int(floor((abs(spatialscene.transform.origin.y) + TINY_VALUE) / settings.grid_size)),
@@ -837,12 +856,24 @@ func forward_spatial_draw_over_viewport(overlay: Control):
 				prefy, int(cell.y), step.y,
 				prefz, int(cell.z), step.z]
 		selection_centerpos = Scene.unproject(editor_camera, selection_center)
+	elif gsraction == GSRAction.GRAB:
+		# The new center of selection, to calculate distance moved
+		var center = Vector3.ZERO
+		for ix in selection.size():
+			center += selection[ix].global_transform.origin
+		center /= selection.size()
+		var dist = center - selection_center
+		text += "  Distance: %.4f  Dx: %.4f  Dy: %.4f  Dz: %.4f" % [dist.length(), dist.x, dist.y, dist.z]
+	elif gsraction == GSRAction.ROTATE:
+		text += "  Deg: %.2f°" % [rotate_display]
+	elif gsraction == GSRAction.SCALE:
+		text += "  Scale: %.2f%%  Sx: %.4f  Sy: %.4f  Sz: %.4f" % [scale_display, scale_axis_display.x, scale_axis_display.y, scale_axis_display.z]
 				
 		
 	overlay.draw_string(f, Vector2(16, 57), text, Color(0, 0, 0, 1))
 	overlay.draw_string(f, Vector2(15, 56), text)
 	
-	if get_current_action() in [GSRAction.SCALE, GSRAction.ROTATE]:
+	if gsraction in [GSRAction.SCALE, GSRAction.ROTATE]:
 		draw_line_dotted(overlay, mousepos + Vector2(0.5, 0.5), 
 				selection_centerpos + Vector2(0.5, 0.5), 4.0, 4.0, Color.black, 1.0, true)
 		draw_line_dotted(overlay, mousepos, selection_centerpos, 4.0, 4.0, Color.white, 1.0, true)
@@ -863,7 +894,7 @@ func forward_spatial_draw_over_viewport(overlay: Control):
 		elif limit & GSRLimit.Z:
 			draw_axis(overlay, GSRLimit.X)
 			draw_axis(overlay, GSRLimit.Y)
-	elif !(get_current_action() in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
+	elif !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]) || gsraction != GSRAction.GRAB:
 		for ix in selection.size():
 			if editor_camera.is_position_behind(start_global_transform[ix].origin):
 				continue
@@ -900,7 +931,7 @@ func draw_axis(control: Control, which, gtrans = null):
 	var color = Color(1, 0.6, 0.6, 1) if which == GSRLimit.X else \
 			(Color(0.6, 1, 0.6, 1) if which == GSRLimit.Y else Color(0.6, 0.6, 1, 1))
 	
-	var global_axis = (!local || gtrans == null) || (get_current_action() == GSRAction.ROTATE && local && (limit & GSRLimit.REVERSE))
+	var global_axis = (!local || gtrans == null) || (gsraction == GSRAction.ROTATE && local && (limit & GSRLimit.REVERSE))
 	
 	var left: Vector3 = Vector3.LEFT
 	var up: Vector3 = Vector3.UP
@@ -1005,17 +1036,18 @@ func start_duplicate_placement(camera: Camera):
 			!(objects[0].get_parent() is Spatial)):
 		return
 	
-	if action != GSRAction.NONE:
+	if gsraction != GSRAction.NONE:
 		cancel_manipulation()
 	
-	spatial_file_path = objects[0].filename
+	gsrstate = GSRState.GRID_ADD
 	
-	interop_work = "gsr_scene_duplication"
+	interop_work = "gsr_grid_duplicate"
 	Interop.start_work(self, interop_work)
+	
 	initialize_scene_placement(camera, objects[0].filename, objects[0].get_parent())
 	if spatialscene != null:
-		spatial_offset = (vmod(vector_exclude_plane(objects[0].transform.origin, spatial_placement_plane), tile_step_size(false)) +
-				vector_plane(objects[0].transform.origin, spatial_placement_plane))
+		spatial_offset = (vmod(vector_exclude_plane(objects[0].transform.origin, spatial_placement_plane),
+				tile_step_size(false)) + vector_plane(objects[0].transform.origin, spatial_placement_plane))
 		spatialscene.transform = objects[0].transform
 		update_scene_placement()
 		
@@ -1045,6 +1077,11 @@ func start_scene_placement(camera: Camera):
 	if parent == null:
 		return
 	
+	if gsraction != GSRAction.NONE:
+		cancel_manipulation()
+	
+	gsrstate = GSRState.GRID_ADD
+	
 	interop_work = "gsr_scene_placemennt"
 	Interop.start_work(self, interop_work)
 	initialize_scene_placement(camera, path, parent)
@@ -1059,10 +1096,7 @@ func initialize_scene_placement(camera: Camera, path: String, parent: Spatial):
 	if ps == null:
 		return
 		
-	if action != GSRAction.NONE:
-		cancel_manipulation()
-	
-	action = GSRAction.SCENE_PLACE
+	gsraction = GSRAction.GRAB
 	spatial_file_path = path
 	
 	spatialscene = ps.instance()
@@ -1077,11 +1111,12 @@ func initialize_scene_placement(camera: Camera, path: String, parent: Spatial):
 	if grid_mesh != null:
 		spatialparent.add_child(grid_mesh)
 		
-	#spatialscene.rotate_y(spatial_rotation)
-	
 	hide_gizmo()
 	disable_undoredo()
 	update_scene_placement()
+	
+	grid_transforms = [spatialscene.transform]
+	grid_undo_pos = 0
 
 
 func start_scene_manipulation(camera: Camera):
@@ -1089,17 +1124,21 @@ func start_scene_manipulation(camera: Camera):
 	var es = ei.get_selection()
 	
 	var objects = es.get_transformable_selected_nodes()
-	if objects == null || objects.empty() || objects.size() > 1 || objects[0].get_parent() == null || !(objects[0].get_parent() is Spatial):
+	if (objects == null || objects.empty() || objects.size() > 1 || objects[0].get_parent() == null ||
+			!(objects[0].get_parent() is Spatial)):
 		return
-				
-	interop_work = "gsr_scene_manipulation"
+
+	if gsraction != GSRAction.NONE:
+		cancel_manipulation()
+
+	interop_work = "gsr_grid"
 	Interop.start_work(self, interop_work)
 				
-	if action != GSRAction.NONE:
-		cancel_manipulation()
 	spatialscene = objects[0]
 	spatialparent =  spatialscene.get_parent()
-	action = GSRAction.SCENE_MOVE
+	
+	gsrstate = GSRState.GRID_MOVE
+	gsraction = GSRAction.GRAB
 	
 	start_mousepos = mousepos
 	editor_camera = camera	
@@ -1119,11 +1158,42 @@ func start_scene_manipulation(camera: Camera):
 		spatial_offset.z = fmod(spatialscene.transform.origin.z + TINY_VALUE, tile_step_size(false))
 	else:
 		spatial_offset.z = stepify(spatialscene.transform.origin.z + TINY_VALUE, tile_step_size(false))
-	grid_start_transform = spatialscene.transform
+	grid_transforms = [spatialscene.transform]
+	grid_undo_pos = 0
 	
 	hide_gizmo()
 	disable_undoredo()
 	update_scene_placement()
+
+
+func change_scene_manipulation(newaction):
+	assert(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE], "Can't change scene manipulation type when not in grid state.")
+	if gsraction == newaction:
+		return
+
+	start_mousepos = mousepos
+		
+	if newaction == GSRAction.GRAB || newaction == GSRAction.NONE:
+		if newaction != GSRAction.NONE:
+			grid_transforms.resize(grid_undo_pos + 1)
+			grid_transforms.append(spatialscene.transform)
+			grid_undo_pos += 1
+		revert_manipulation(newaction == GSRAction.NONE)
+		gsraction = GSRAction.GRAB
+		return
+		
+	if gsraction != GSRAction.GRAB:
+		revert_manipulation(false)
+		
+	if newaction == GSRAction.ROTATE:
+		rotate_mousepos = mousepos
+		
+	selection = [spatialscene]
+	save_transforms()
+	gsraction = newaction
+	
+	limit_transform = spatialparent.global_transform
+	initialize_manipulation()
 
 
 func external_request_manipulation(camera: Camera, what: String, obj, caller_object, caller_notification: String):
@@ -1150,97 +1220,126 @@ func external_request_manipulation(camera: Camera, what: String, obj, caller_obj
 		obj = [obj]
 	elif obj is Array:
 		for ix in obj.size():
-			assert(obj[ix] is Spatial, "Every object must be a spatial")
+			assert(obj[ix] is Spatial, "Every object must be a Spatial")
 	
-	cancel_manipulation(true)
-	
-	saved_mousepos = mousepos
-	external_objects = obj
-	external_action = true
+	if gsraction != GSRAction.NONE:
+		cancel_manipulation()
+
 	external_what = what
 	external_caller = caller_object
 	external_callback = caller_notification
-	editor_camera = camera
-	action = main_action
-	local = is_local_button_down()
 	external_selected = selected
+
+	editor_camera = camera
+	local = is_local_button_down()
+
+	gsrstate = GSRState.EXTERNAL_MANIPULATE
+	gsraction = main_action
+	
+	start_mousepos = mousepos
+	selection = obj
 	selected = true
 	
 	hide_gizmo()
 	disable_undoredo()
-	initialize_manipulation(obj)
+	save_transforms()
+	initialize_manipulation()
 	
 
-func change_scene_manipulation(newaction):
-	if !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]) || active_action == newaction:
+# Same as grab, but first creates a duplicate of the selected scenes.
+# Cancelling this action will still keep the duplicated meshes.
+func start_duplication(camera: Camera):
+	assert(gsrstate == GSRState.NONE, "Can't start duplication when an action is already in progress")
+	
+	var ei = get_editor_interface()
+	var es = ei.get_selection()
+	
+#	Scene.clear_selection(self)
+#	Scene.set_selected(self, dup, true)
+	
+	var objects = es.get_transformable_selected_nodes()
+	selection = []
+	for obj in objects:
+		if obj is Spatial:
+			var dup = obj.duplicate()
+			obj.get_parent().add_child(dup)
+			dup.owner = obj.owner
+			selection.append(dup)
+	
+	#selection = es.get_selected_nodes()
+	if selection.empty():
 		return
-	if active_action != GSRAction.NONE || newaction == GSRAction.NONE:
-		cancel_manipulation()
+	
+	editor_camera = camera
+	local = is_local_button_down()
+	
+	gsrstate = GSRState.DUPLICATE
+	save_transforms()
+
+	interop_work = "gsr_duplicate"
+	Interop.start_work(self, interop_work)
+	
+	start_mousepos = mousepos
 		
-	active_action = newaction
-	if newaction == GSRAction.NONE:
-		return
-		
-	var dummy = [spatialscene]
-	limit_transform = spatialparent.global_transform
-	initialize_manipulation(dummy)
+	hide_gizmo()
+	disable_undoredo()
+	change_manipulation(GSRAction.GRAB)
 
 
 func start_manipulation(camera: Camera, newaction):
-	if action == newaction:
+	assert(gsrstate == GSRState.NONE, "Can't start manipulation when an action is already in progress")
+	
+	selection = []
+	var ei = get_editor_interface()
+	var es = ei.get_selection()
+	
+	var objects = es.get_transformable_selected_nodes()
+	for obj in objects:
+		if obj is Spatial:
+			selection.append(obj)
+	
+	if selection.empty():
 		return
+		
+	editor_camera = camera
+	local = is_local_button_down()
+	gsrstate = GSRState.MANIPULATE
+	save_transforms()
 		
 	interop_work = "gsr_transform"
 	Interop.start_work(self, interop_work)
 
-	if action != GSRAction.NONE:
-		cancel_manipulation()
-	
-	editor_camera = camera
-		
-	action = newaction
-	local = is_local_button_down()
-	
-	var spatials = []
-	if !external_action:
-		var ei = get_editor_interface()
-		var es = ei.get_selection()
-		
-		var objects = es.get_transformable_selected_nodes()
-		for obj in objects:
-			if obj is Spatial:
-				spatials.append(obj)
-	else:
-		spatials = external_objects
-	
-	if spatials.empty():
-		reset()
-	else:
-		hide_gizmo()
-		disable_undoredo()
-		initialize_manipulation(spatials)
-
-
-func initialize_manipulation(spatials):
 	start_mousepos = mousepos
-	selection = spatials
+
+	hide_gizmo()
+	disable_undoredo()
+	change_manipulation(newaction)
 	
-	start_transform.resize(selection.size())
-	start_global_transform.resize(selection.size())
+
+func change_manipulation(newaction):
+	assert(gsrstate in [GSRState.DUPLICATE, GSRState.EXTERNAL_MANIPULATE, GSRState.MANIPULATE], "Can't change manipulation action when not in the right state.")
+	if gsraction == newaction:
+		return
+
+	if gsrstate == GSRState.DUPLICATE && (!(newaction in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE])):
+		return
 	
-	for ix in selection.size():
-		start_transform[ix] = selection[ix].transform
-		start_global_transform[ix] = selection[ix].global_transform
+	if gsraction != GSRAction.NONE:
+		revert_manipulation()
 		
-	selection_center = calculate_global_center(selection)
-		
-	selection_centerpos = Scene.unproject(editor_camera, selection_center)
-	
-	if get_current_action() == GSRAction.SCALE || get_current_action() == GSRAction.ROTATE:
+	gsraction = newaction
+	initialize_manipulation()
+	if newaction == GSRAction.ROTATE:
+		rotate_mousepos = start_mousepos
+	manipulate_selection()
+
+
+func initialize_manipulation():
+	if gsraction in [GSRAction.SCALE, GSRAction.ROTATE]:
 		if (selection_centerpos.distance_to(start_mousepos) < MINIMUM_MANIPULATION_MOUSE_DISTANCE):
 			if selection_centerpos == start_mousepos:
 				start_mousepos = selection_centerpos + Vector2(MINIMUM_MANIPULATION_MOUSE_DISTANCE, 0)
-			elif get_current_action() == GSRAction.SCALE:
+			elif gsraction == GSRAction.SCALE:
 				start_mousepos = selection_centerpos + ((start_mousepos - selection_centerpos).normalized() * MINIMUM_MANIPULATION_MOUSE_DISTANCE)
 	
 	selection_distance = selection_center.distance_to(Scene.camera_ray_origin(editor_camera, selection_centerpos))
@@ -1285,7 +1384,7 @@ func calculate_global_center(objects: Array) -> Vector3:
 
 
 func change_scene_limit(newlimit):
-	if !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
+	if !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]):
 		return
 		
 	if limit != newlimit:
@@ -1299,7 +1398,7 @@ func change_scene_limit(newlimit):
 
 
 func cancel_scene_limit():
-	if !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]):
+	if !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]) || gsraction != GSRAction.GRAB:
 		return
 		
 	spatial_offset = set_vector_component(spatial_offset, limit, saved_offset)
@@ -1308,7 +1407,7 @@ func cancel_scene_limit():
 
 
 func change_scene_plane(newplane):
-	if !(action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]) || spatial_placement_plane == newplane:
+	if !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]) || gsraction != GSRAction.GRAB || spatial_placement_plane == newplane:
 		return
 	
 	if limit != 0:
@@ -1328,7 +1427,7 @@ func change_scene_plane(newplane):
 
 
 func change_limit(newlimit):
-	revert_manipulation()
+	revert_transforms()
 	if newlimit != 0:
 		var lbd = is_local_button_down()
 		if newlimit == limit:
@@ -1351,7 +1450,7 @@ func numeric_input(ch):
 		update_overlays()
 		return
 		
-	revert_manipulation()
+	revert_transforms()
 	if ch == '-':
 		if numerics.empty() || numerics[0] != '-':
 			numerics = "-" + numerics
@@ -1370,7 +1469,7 @@ func numeric_delete():
 		numerics = numerics.substr(0, numerics.length() - 1)
 		return
 		
-	revert_manipulation()
+	revert_transforms()
 	numerics = numerics.substr(0, numerics.length() - 1)
 	apply_manipulation()
 
@@ -1534,74 +1633,106 @@ func finalize_scene_placement():
 		reset_scene_action()
 		return
 	
-	var transform = spatialscene.transform
-	reset_scene_action()
+	limit = GSRLimit.NONE
 	
 	enable_undoredo()
-	var ur = get_undo_redo()
 	
-	if action == GSRAction.SCENE_PLACE:
+	var ur = get_undo_redo()
+	if gsrstate == GSRState.GRID_ADD:
 		ur.create_action("GSR Scene Placement")
-		ur.add_do_method(self, "do_place_scene", spatial_file_path, spatialparent, transform)
-		ur.add_undo_method(self, "undo_place_scene", spatialparent)
-	else: # SCENE_MOVE
+		ur.add_do_method(spatialparent, "add_child", spatialscene)
+		ur.add_do_method(spatialscene, "set_owner", spatialparent.owner if spatialparent.owner != null else spatialparent)
+		ur.add_do_property(spatialscene, "transform", spatialscene.transform)
+		ur.add_do_reference(spatialscene)
+		ur.add_undo_method(spatialparent, "remove_child", spatialscene)
+		
+		if spatialscene.get_parent() != null:
+			spatialscene.get_parent().remove_child(spatialscene)
+	else: # GRID_MOVE
 		ur.create_action("GSR Action")
-		ur.add_do_property(spatialscene, "transform", transform)
-		ur.add_undo_property(spatialscene, "transform", spatialscene.transform)		
+		ur.add_do_property(spatialscene, "transform", spatialscene.transform)
+		ur.add_undo_property(spatialscene, "transform", grid_transforms[0])		
 	ur.commit_action()
 	
 	reset()
 
 
-func do_place_scene(spath, sparent, stransform):
-	var ps := get_placement_scene(spath)
-	if ps == null || !is_instance_valid(sparent):
-		return
-	
-	var s = ps.instance()
-	sparent.add_child(s)
-	s.owner = sparent if sparent.owner == null else sparent.owner
-	s.transform = stransform
-
-
-func undo_place_scene(sparent):
-	if !is_instance_valid(sparent) || !(sparent is Spatial):
-		return
-	sparent.remove_child(sparent.get_child(sparent.get_child_count() - 1)) 
+#func do_place_scene(spath, sparentpath, stransform):
+#	var ps := get_placement_scene(spath)
+#	var root := get_editor_interface().get_edited_scene_root()
+#	var sparent := root.get_node(sparentpath)
+#	if ps == null || !is_instance_valid(sparent):
+#		return
+#
+#	var s = ps.instance()
+#	sparent.add_child(s)
+#	s.owner = sparent if sparent.owner == null else sparent.owner
+#	s.transform = stransform
+#
+#
+#func undo_place_scene(sparentpath):
+#	var root := get_editor_interface().get_edited_scene_root()
+#	var sparent := root.get_node(sparentpath)
+#	if !is_instance_valid(sparent) || !(sparent is Spatial):
+#		return
+#	sparent.remove_child(sparent.get_child(sparent.get_child_count() - 1)) 
 
 
 func manipulate_selection():
-	if !(get_current_action() in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]) || selection.empty():
+	if !(gsraction in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]) || selection.empty():
 		return
 	
-	revert_manipulation()
+	revert_transforms()
 	apply_manipulation()
 
 
-# Moves/rotates/scales selection back to original transform before manipulation
-# started.
-func revert_manipulation():
-	if selection.empty():
-		return
+# Moves/rotates/scales selection back to original transform before manipulations started
+# and resets limits/numeric input and relative mouse movement.
+func revert_manipulation(transforms: bool = true):
+	assert(!selection.empty(), "Can't revert manipulation when there was nothing selected")
 	
-	for ix in selection.size():
-		selection[ix].transform = start_transform[ix]
+	if transforms:
+		revert_transforms()
 	UI.disable_undoredo(self, hadundo, hadredo)
 
+	limit = GSRLimit.NONE
+	rotate_angle = 0.0
+	numerics = ""
+	mousepos_offset = Vector2.ZERO
+	reference_mousepos = Vector2.ZERO
+
+
+func save_transforms():
+	start_transform.resize(selection.size())
+	start_global_transform.resize(selection.size())
+	
+	for ix in selection.size():
+		start_transform[ix] = selection[ix].transform
+		start_global_transform[ix] = selection[ix].global_transform
+		
+	selection_center = calculate_global_center(selection)
+	selection_centerpos = Scene.unproject(editor_camera, selection_center)
+	
+
+func revert_transforms():
+	for ix in selection.size():
+		selection[ix].transform = start_transform[ix]
+	
 
 func reset_scene_action():
 	if spatialscene != null:
-		if action == GSRAction.SCENE_PLACE:
-			spatialscene.queue_free()
+		if gsrstate == GSRState.GRID_ADD:
+			spatialscene.free()
 			spatialscene = null
-		else: # SCENE_MOVE
-			spatialscene.transform = grid_start_transform
+		else: # GRID_MOVE
+			spatialscene.transform = grid_transforms[0]
 	if grid_mesh != null && grid_mesh.get_parent() != null:
 		grid_mesh.get_parent().remove_child(grid_mesh)
+	limit = GSRLimit.NONE
 
 
 func apply_manipulation():
-	if !(get_current_action() in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]) || selection.empty():
+	if !(gsraction in [GSRAction.GRAB, GSRAction.SCALE, GSRAction.ROTATE]) || selection.empty():
 		return
 	
 	var camera := editor_camera
@@ -1610,7 +1741,7 @@ func apply_manipulation():
 	if !numerics.empty():
 		constant = numerics.to_float()
 
-	if get_current_action() == GSRAction.GRAB:
+	if gsraction == GSRAction.GRAB:
 		var offset: Vector3
 		
 		for ix in selection.size():
@@ -1669,12 +1800,13 @@ func apply_manipulation():
 						offset = offset.normalized() * stepify(offset.length(), grab_step_size())
 						
 			offset_object(ix, offset)
-	elif get_current_action() == GSRAction.ROTATE:
+	elif gsraction == GSRAction.ROTATE:
 		var offset: float = 0.0
 		var point := selection_center
 		var axis := Vector3.ZERO
 		
-		var change = Vector2(mousepos - selection_centerpos).angle_to(Vector2(saved_mousepos - selection_centerpos)) * get_action_strength()
+		var change = Vector2(mousepos - selection_centerpos).angle_to(Vector2(rotate_mousepos - selection_centerpos)) * get_action_strength()
+		rotate_mousepos = mousepos
 		rotate_angle += change
 		
 		if is_snapping():
@@ -1708,7 +1840,7 @@ func apply_manipulation():
 				offset = deg2rad(stepify(rad2deg(offset), snapstep))
 				
 			rotate_object(ix, offset, point, axis, local)
-	elif get_current_action() == GSRAction.SCALE:
+	elif gsraction == GSRAction.SCALE:
 		var point := selection_center
 		var scale
 		if constant == null:
@@ -1756,6 +1888,35 @@ func apply_manipulation():
 			scale_object(ix, scaled, axis_scale, point, local)
 	update_overlays()
 	update_cross_transform()
+
+
+func offset_object(index: int, movedby: Vector3):
+	selection[index].global_transform.origin += movedby
+	UI.disable_undoredo(self, hadundo, hadredo)
+
+
+func rotate_object(index: int, angle: float, center: Vector3, axis: Vector3, in_place: bool):
+	var obj = selection[index]
+	
+	var displaced
+	if !in_place:
+		displaced = obj.global_transform.origin - center
+		var t := Transform().rotated(axis, angle)
+		displaced = t.xform(displaced)
+		
+	obj.global_rotate(axis, angle)
+	
+	if !in_place:
+		obj.global_transform.origin = displaced + center
+	UI.disable_undoredo(self, hadundo, hadredo)
+
+
+func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector3, in_place: bool):
+	var obj = selection[index]
+	obj.scale = Vector3(obj.transform.basis.x.length() * scale.x, obj.transform.basis.y.length() * scale.y, obj.transform.basis.z.length() * scale.z)
+	
+	obj.global_transform.origin = (obj.global_transform.origin - center) * pos_scale + center
+	UI.disable_undoredo(self, hadundo, hadredo)
 
 
 func get_limit_axis_vector(index: int) -> Vector3:
@@ -1860,28 +2021,29 @@ func get_limit_axis_reverse_vectors(index: int) -> Array:
 
 
 func external_cancel():
-	if !external_action || !(action in [GSRAction.GRAB, GSRAction.ROTATE, GSRAction.SCALE]):
+	if gsrstate != GSRState.EXTERNAL_MANIPULATE:
 		return
 	external_caller.call(external_callback, external_what, false, null)
 	external_reset()
 	
 
-# Cancels ongoing manipulation and grid snapping action, restoring old transform of involved
-# spatials. If full_cancel is false and a spatial is being rotated/scaled inside the grid, only
-# the rotation/scale is cancelled, not the grid action. Otherwise both are cancelled.
-func cancel_manipulation(full_cancel = false):
-	if get_current_action() in [GSRAction.GRAB, GSRAction.ROTATE, GSRAction.SCALE]:
+# Cancels ongoing manipulation restoring old transform of involved spatials.
+func cancel_manipulation():
+	if gsraction == GSRAction.NONE:
+		return
+		
+	if !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]):
 		revert_manipulation()
-	if (full_cancel || active_action == GSRAction.NONE) && action in [GSRAction.SCENE_PLACE, GSRAction.SCENE_MOVE]:
+	if gsraction == GSRAction.GRAB && gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
 		reset_scene_action()
-	reset(full_cancel)
+	reset()
 
 
 # Applying grab, scale or rotate manipulation, so the spatials being manipulated take up their
 # final position. In case manipulation is just the sub-action while placing a spatial in a grid,
 # returns to that action instead, while keeping the new scale or rotation of the spatial.
 func finalize_manipulation():
-	if active_action == GSRAction.NONE:
+	if gsrstate in [GSRState.DUPLICATE, GSRState.MANIPULATE, GSRState.EXTERNAL_MANIPULATE]:
 		# Saving current transforms, and then resetting to original, so the undo
 		# can do its magic with the two transforms.
 		var selection_final_state = []
@@ -1891,104 +2053,86 @@ func finalize_manipulation():
 		
 		enable_undoredo()
 		
-		if !external_action:
+		if gsrstate != GSRState.EXTERNAL_MANIPULATE:
+			var reverted_transforms = []
+			for s in selection:
+				reverted_transforms.append(s.transform)
+				
 			var ur = get_undo_redo()
+			if gsrstate == GSRState.DUPLICATE:
+				Scene.clear_selection(self)
+				ur.create_action("GSR Duplicate")
+				for s in selection:
+					var p = s.get_parent()
+					ur.add_do_method(p, "add_child", s)
+					ur.add_do_method(s, "set_owner", s.owner)
+					ur.add_do_reference(s)
+					ur.add_undo_method(p, "remove_child", s)
+				for s in selection:
+					s.get_parent().remove_child(s)
+				ur.commit_action()
+				for s in selection:
+					Scene.set_selected(self, s, true)
 			ur.create_action("GSR Action")
 			for ix in selection.size():
 				var item = selection[ix]
 				ur.add_do_property(item, "transform", selection_final_state[ix])
-				ur.add_undo_property(item, "transform", item.transform)
+				ur.add_undo_property(item, "transform", reverted_transforms[ix])
 			ur.commit_action()
 		else:
 			external_caller.call(external_callback, external_what, true, selection_final_state)
 			external_reset()
 	
-	reset(active_action == GSRAction.NONE)
+	reset()
 
 
-func reset(full_reset = true):
-	var old_action = action
+func reset():
+	var oldstate = gsrstate
 	
-	if full_reset || active_action == GSRAction.NONE:
-		# Reset these only if not in a sub-action.
-		action = GSRAction.NONE
+	if gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]:
+		if grid_mesh != null && grid_mesh.get_parent() != null:
+			grid_mesh.get_parent().remove_child(grid_mesh)
 	
-		grid_start_transform = null
-		
-		limit_transform = null
-		
-		spatialscene = null
-		spatialparent = null
-		
-		snap_toggle = false
-		
-		show_gizmo()
-		enable_undoredo()
-		
-		editor_camera = null
+	gsrstate = GSRState.NONE
 
-	# Values reset for every action.
-	limit = GSRLimit.NONE
-	rotate_angle = 0.0
-	numerics = ""
+	grid_transforms = []
+	grid_undo_pos = -1
+	
+	limit_transform = null
+	
+	spatialscene = null
+	spatialparent = null
+	
+	snap_toggle = false
+	
+	show_gizmo()
+	enable_undoredo()
+	
+	editor_camera = null
 
 	start_transform = []
 	start_global_transform = []
 	selection = []
 	local = false
-	active_action = GSRAction.NONE
+	gsraction = GSRAction.GRAB if gsrstate != GSRState.NONE else GSRAction.NONE
 	smoothing = false
-	
-	mousepos_offset = Vector2.ZERO
-	reference_mousepos = Vector2.ZERO
 	
 	update_overlays()
 	update_cross_transform()
 	
-	if old_action != GSRAction.NONE && action == GSRAction.NONE && !interop_work.empty():
+	if oldstate != GSRState.NONE && gsrstate == GSRAction.NONE && !interop_work.empty():
 		Interop.end_work(self, interop_work)
 		
 	interop_work = ""
 
 
 func external_reset():
-	external_action = false
-	external_objects = []
 	external_allowed_actions = {}
 
 	external_what = String()
 	external_caller = null
 	external_callback = String()
 	selected = external_selected
-
-
-func offset_object(index: int, movedby: Vector3):
-	selection[index].global_transform.origin += movedby
-	UI.disable_undoredo(self, hadundo, hadredo)
-
-
-func rotate_object(index: int, angle: float, center: Vector3, axis: Vector3, in_place: bool):
-	var obj = selection[index]
-	
-	var displaced
-	if !in_place:
-		displaced = obj.global_transform.origin - center
-		var t := Transform().rotated(axis, angle)
-		displaced = t.xform(displaced)
-		
-	obj.global_rotate(axis, angle)
-	
-	if !in_place:
-		obj.global_transform.origin = displaced + center
-	UI.disable_undoredo(self, hadundo, hadredo)
-
-
-func scale_object(index: int, scale: Vector3, pos_scale: Vector3, center: Vector3, in_place: bool):
-	var obj = selection[index]
-	obj.scale = Vector3(obj.transform.basis.x.length() * scale.x, obj.transform.basis.y.length() * scale.y, obj.transform.basis.z.length() * scale.z)
-	
-	obj.global_transform.origin = (obj.global_transform.origin - center) * pos_scale + center
-	UI.disable_undoredo(self, hadundo, hadredo)
 
 
 func generate_meshes():
@@ -2071,7 +2215,7 @@ func update_cross_transform():
 		zvec = Vector3.BACK
 	elif gizmo_spatials != null && !gizmo_spatials.empty():
 		position = calculate_global_center(gizmo_spatials)
-		var rotlocal = local if (active_action != GSRAction.NONE || action != GSRAction.NONE) else is_local_button_down() 
+		var rotlocal = local if gsraction == GSRAction.NONE else is_local_button_down() 
 		xvec = (gizmo_spatials[0].global_transform.basis.x if gizmo_spatials.size() == 1 && rotlocal else Vector3.RIGHT).normalized()
 		yvec = (gizmo_spatials[0].global_transform.basis.y if gizmo_spatials.size() == 1 && rotlocal else Vector3.UP).normalized()
 		zvec = (gizmo_spatials[0].global_transform.basis.z if gizmo_spatials.size() == 1 && rotlocal else Vector3.BACK).normalized()
@@ -2113,8 +2257,5 @@ func _on_unpack_dir_selected(dir):
 		else:
 			print("Error. Failed to save " + dir + "/" + name + ".tscn")
 
-
-func get_current_action():
-	return action if active_action == GSRAction.NONE else active_action
 
 

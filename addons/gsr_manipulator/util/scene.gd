@@ -86,6 +86,15 @@ static func set_selected(plugin: EditorPlugin, node: Node, select: bool):
 		
 		ei.inspect_object(nextsel)
 
+
+static func get_absolute_path(plugin: EditorPlugin, node: Node):
+	return plugin.get_editor_interface().get_edited_scene_root().get_path_to(node)
+
+
+static func instance_from_path(plugin: EditorPlugin, path: String):
+	return plugin.get_editor_interface().get_edited_scene_root().get_node(path)
+
+
 # Return a node at mousepos owned by the scene root. To return the node that's coming after another
 # at the position, pass it in after_node.
 static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos: Vector2, after_node = null, reset = false):
