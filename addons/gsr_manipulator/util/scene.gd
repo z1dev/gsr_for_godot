@@ -95,83 +95,98 @@ static func instance_from_path(plugin: EditorPlugin, path: String):
 	return plugin.get_editor_interface().get_edited_scene_root().get_node(path)
 
 
+enum { MOUSE_SELECT_FRONT_FACING_TRIANGLES = 1,
+		MOUSE_SELECT_BACK_FACING_TRIANGLES = 2,
+		MOUSE_SELECT_COLLISION_SHAPE = 4,
+		MOUSE_SELECT_LIGHT = 8,
+		MOUSE_SELECT_CAMERA = 16,
+		MOUSE_SELECT_RAYCAST = 32,
+		
+		MOUSE_SELECT_RESET = 64 }
+
 # Return a node at mousepos owned by the scene root. To return the node that's coming after another
 # at the position, pass it in after_node.
-static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos: Vector2, after_node = null, reset = false):
+static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos: Vector2, flags: int = 0, after_node = null):
 	var scene_root = plugin.get_editor_interface().get_edited_scene_root()
 	if scene_root == null:
 		return null
+		
+	var check_front_tri = (flags & MOUSE_SELECT_FRONT_FACING_TRIANGLES) != 0
+	var check_back_tri = (flags & MOUSE_SELECT_BACK_FACING_TRIANGLES) != 0
+	var check_coll = (flags & MOUSE_SELECT_COLLISION_SHAPE) != 0
+	var check_light = (flags & MOUSE_SELECT_LIGHT) != 0
+	var check_cam = (flags & MOUSE_SELECT_CAMERA) != 0
+	var check_ray = (flags & MOUSE_SELECT_RAYCAST) != 0
 	
 	# All scenes owned by the scene root.
 	var scenes = get_scene_nodes(scene_root)
 	
-	var meshes = []
+	var selectables = []
 	# Find all mesh instance objects owned by the scenes in `scenes`.
 	# Meshes will contain a pair of the scenes and an array of mesh instances belonging to them.
 	for s in scenes:
-		var arr = get_scene_meshes(scene_root, s)
+		var arr = get_selectable_children(scene_root, s, flags)
 		if arr == null || arr.empty():
 			continue
-		meshes.append([s, arr])
+		selectables.append([s, arr])
 	
-	if meshes.empty():
+	if selectables.empty():
 		return null
-	
-	# Filter the meshes array to only hold those meshes that could have been clicked. Their aabb
-	# projected on the camera contains mousepos.
-	var tmp = meshes
-	meshes = []
 	
 	var camera_plane := Plane(camera_ray_origin(camera, Vector2(100, 100)), camera_ray_origin(camera, Vector2(100, 0)),
 			camera_ray_origin(camera, Vector2(0, 0))) if camera.projection != camera.PROJECTION_PERSPECTIVE else Plane(
 				camera.project_position(Vector2(10, 10), camera.near + 0.00001), camera.project_position(Vector2(10, 0), camera.near + 0.00001),
 				camera.project_position(Vector2(0, 0), camera.near + 0.00001))
+	
+	# Filter the meshes array to only hold those meshes that could have been clicked. Their aabb
+	# projected on the camera contains mousepos.
+	var tmp = selectables
+	selectables = []
 				
 	var after_node_index = -1
 	for pair in tmp:
-		var mesh_pair = null
-		for m in pair[1]:
-			if aabb_has_point(camera, camera_plane, mousepos, m):
-				if mesh_pair == null:
-					mesh_pair = [pair[0], [m]]
-					if after_node == mesh_pair[0]:
-						after_node_index = meshes.size()
-					meshes.append(mesh_pair)
+		var scene_pair = null
+		for s in pair[1]:
+			if aabb_has_point(camera, camera_plane, mousepos, s):
+				if scene_pair == null:
+					scene_pair = [pair[0], [s]]
+					if after_node == scene_pair[0]:
+						after_node_index = selectables.size()
+					selectables.append(scene_pair)
 				else:
-					mesh_pair[1].append(m)
+					scene_pair[1].append(s)
 
 	# Find the closest and furthest point of the aabb of each mesh from the camera plane.
 	var distances = []
 	
 	# Pairs of [mesh instance index, mesh index] in mesh values.
-	var meshpos = []
-	for ix in meshes.size():
-		var arr = meshes[ix][1] 
+	var selpos = []
+	for ix in selectables.size():
+		var arr = selectables[ix][1] 
 		for iy in arr.size():
 			distances.append(aabb_distances(camera, camera_plane, arr[iy]))
-			meshpos.append([ix, iy])
-	
+			selpos.append([ix, iy])
+
 	# Ordering of distances from camera plane.
 	var order = range(distances.size())
 	order.sort_custom(DistanceOrderSorter.new(distances), "sort")
 	
 	# Meshes under mousepos with their nearest distance
 	var found = {}
-		
+
 	# Find the distance to after_node first, to know what comes after
 	var after_node_dist = null
 	if after_node_index != -1:
 		for o in order:
-			var pos = meshpos[o]
+			var pos = selpos[o]
 			if pos[0] != after_node_index:
 				continue
 			if after_node_dist != null && distances[o][0] > after_node_dist:
 				continue
-			after_node_dist = nmin(after_node_dist, mesh_hit_distance(camera, camera_plane, mousepos, meshes[pos[0]][1][pos[1]]))
+			after_node_dist = nmin(after_node_dist, mesh_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
 		if after_node_dist != null:
 			found[after_node_index] = after_node_dist
 		
-	
 	# A unique value of node owner, used for sorting. Same as the node's index when looping
 	# through the order list.
 	var node_order = {}
@@ -185,7 +200,7 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 	var after_dist = null
 	# Fill `found` with scenes and their nearest distance to the camera.
 	for o in order:
-		var pos = meshpos[o]
+		var pos = selpos[o]
 		if !node_order.has(pos[0]):
 			node_order[pos[0]] = node_order.size()
 		
@@ -195,7 +210,7 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 		var dist = null
 		# Find the closest mesh, independent of whether an after_node exists or not.
 		if close_dist == null || distances[o][0] <= close_dist:
-			dist = nmin(found.get(pos[0]), mesh_hit_distance(camera, camera_plane, mousepos, meshes[pos[0]][1][pos[1]]))
+			dist = nmin(found.get(pos[0]), mesh_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
 			if dist == null:
 				continue
 			found[pos[0]] = dist
@@ -213,20 +228,20 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 				if fdist != null && fdist < after_node_dist:
 					continue
 				if dist == null:
-					dist = nmin(fdist, mesh_hit_distance(camera, camera_plane, mousepos, meshes[pos[0]][1][pos[1]]))
+					dist = nmin(fdist, mesh_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
 					if dist == null:
 						continue
 				found[pos[0]] = dist
 				if distances[o][0] > after_node_dist && (after_dist == null || dist < after_dist):
 					after_dist = dist
-	
+					
 	if close_node == null:
 		if after_node_dist != null:
 			return after_node
 		return null
 	
-	if after_node_dist == null || (reset && close_node != after_node_index):
-		return meshes[close_node][0]
+	if after_node_dist == null || ((flags & MOUSE_SELECT_RESET) != 0 && close_node != after_node_index):
+		return selectables[close_node][0]
 	
 	# The found list has all nodes and their distances near after_node. To find the one coming
 	# after after_node, an ordered index is created.
@@ -236,8 +251,8 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 	
 	var pos = order.find(after_node_index)
 	if pos == order.size() - 1 || pos == -1:
-		return meshes[close_node][0]
-	return meshes[order[pos + 1]][0]
+		return selectables[close_node][0]
+	return selectables[order[pos + 1]][0]
 
 
 static func unproject(camera: Camera, world_point: Vector3) -> Vector2:
@@ -271,17 +286,17 @@ static func camera_ray_normal(camera: Camera, screen_point: Vector2) -> Vector3:
 
 
 # Returns an array of Spatial nodes that are owned by the passed scene.
-static func get_scene_nodes(scene):
-	var arr = [scene]
+static func get_scene_nodes(scene_root):
+	var arr = [scene_root]
 	var pos = 0
 	
 	var result = []
-	if scene is Spatial:
-		result.append(scene)
+	if scene_root is Spatial:
+		result.append(scene_root)
 	
 	while pos < arr.size():
 		for c in arr[pos].get_children():
-			if !(c is Node) || c.get_owner() != scene:
+			if c.get_owner() != scene_root:
 				continue
 			arr.append(c)
 			if c is Spatial:
@@ -290,57 +305,54 @@ static func get_scene_nodes(scene):
 	return result
 
 
-# Returns an array of mesh instance objects whose nearest parent that's owned by scene_root
-# is `scene`.
-static func get_scene_meshes(scene_root, scene):
+# Returns an array of objects selectable by the plugin, whose owner is scene.
+static func get_selectable_children(scene_root: Node, scene: Spatial, flags: int):
 	var arr = [scene]
 	var pos = 0
 	
 	var result = []
-	if scene is MeshInstance:
+	if __is_selectable_scene(scene, flags):
 		result.append(scene)
 	
 	while pos < arr.size():
 		for c in arr[pos].get_children():
-			if !(c is Node) || c.get_owner() == scene_root:
+			if c.get_owner() == scene_root:
 				continue
-			if c is MeshInstance:
+			if __is_selectable_scene(c, flags):
 				result.append(c)
 			arr.append(c)
 		pos += 1
 	return result
 
+
+#MOUSE_SELECT_FRONT_FACING_TRIANGLES = 1,
+#		MOUSE_SELECT_BACK_FACING_TRIANGLES = 2,
+#		MOUSE_SELECT_COLLISION_SHAPE = 4,
+#		MOUSE_SELECT_LIGHT = 8,
+#		MOUSE_SELECT_CAMERA = 16,
+#		MOUSE_SELECT_RAYCAST = 32,
+static func __is_selectable_scene(s: Node, flags: int):
+	return (((((flags & MOUSE_SELECT_FRONT_FACING_TRIANGLES) || (flags & MOUSE_SELECT_BACK_FACING_TRIANGLES))) && (s is MeshInstance && s.mesh != null)) ||
+			((flags & MOUSE_SELECT_COLLISION_SHAPE) && s is CollisionShape && s.shape != null))
+
+
 # Returns true if projecting the aabb onto the camera's view plane contains the position.
-static func aabb_has_point(camera: Camera, camera_plane: Plane, pos: Vector2, m: MeshInstance):
-#	var is_behind = true
-#	var side := 0
-#	var aabb := m.get_aabb()
-#	for i in 8:
-#		var pt := m.to_global(aabb.get_endpoint(i))
-#		if is_behind && !camera.is_position_behind(pt):
-#			is_behind = false
-#		if side == 15:
-#			if !is_behind:
-#				return true
-#			continue
-#		var spt := unproject(camera, pt)
-#		if spt.x - CLICK_MARGIN <= pos.x:
-#			side |= 1
-#		if spt.x + CLICK_MARGIN >= pos.x:
-#			side |= 2
-#		if spt.y - CLICK_MARGIN <= pos.y:
-#			side |= 4
-#		if spt.y + CLICK_MARGIN >= pos.y:
-#			side |= 8
-#
-#	return !is_behind && side == 15
-	var aabb := m.get_aabb()
+static func aabb_has_point(camera: Camera, camera_plane: Plane, pos: Vector2, obj):
+	var aabb: AABB
+	if obj is MeshInstance:
+		aabb = obj.get_aabb()
+	elif obj is CollisionShape:
+		var mesh = obj.shape.get_debug_mesh()
+		aabb = mesh.get_aabb()
 	
-	var pt1 = m.to_global(aabb.position)
-	var pt2 = m.to_global(aabb.end)
+	var pt1 = aabb.position
+	var pt2 = aabb.end
 	var points = [pt1, pt2, Vector3(pt1.x, pt1.y, pt2.z), Vector3(pt1.x, pt2.y, pt1.z),
 			Vector3(pt2.x, pt1.y, pt1.z), Vector3(pt2.x, pt2.y, pt1.z),
 			Vector3(pt2.x, pt1.y, pt2.z), Vector3(pt1.x, pt2.y, pt2.z)]
+	for ix in points.size():
+		points[ix] = obj.to_global(points[ix])
+		
 	var pointarray = [[0, 2], [0, 3], [0, 4], [1, 5], [1, 6], [1, 7], [2, 6], [2, 7], [3, 5], [3, 7], [4, 5], [4, 6]]
 	
 	var minpos = null
@@ -377,13 +389,19 @@ static func aabb_has_point(camera: Camera, camera_plane: Plane, pos: Vector2, m:
 			maxpos - minpos + Vector2(CLICK_MARGIN, CLICK_MARGIN) * 2).has_point(pos)
 
 
-static func aabb_distances(camera: Camera, camera_plane, mesh: MeshInstance):
-	var aabb := mesh.get_aabb()
+static func aabb_distances(camera: Camera, camera_plane, obj):
+	var aabb: AABB
+	if obj is MeshInstance:
+		aabb = obj.get_aabb()
+	elif obj is CollisionShape:
+		var mesh = obj.shape.get_debug_mesh()
+		aabb = mesh.get_aabb()
+		
 	var near = null
 	var far = null
-	for i in 8:
-		var pt := mesh.to_global(aabb.get_endpoint(i))
-		var dist = camera_plane.distance_to(pt) # if camera.projection != camera.PROJECTION_PERSPECTIVE else cam_origin.distance_to(pt)
+	for ix in 8:
+		var pt: Vector3 = obj.to_global(aabb.get_endpoint(ix))
+		var dist = camera_plane.distance_to(pt)
 		if near == null || near > dist:
 			near = dist
 		if far == null || far < dist:
@@ -393,33 +411,40 @@ static func aabb_distances(camera: Camera, camera_plane, mesh: MeshInstance):
 
 # Returns the distance from 2d camera position projected onto mesh. Uses CLICK_MARGIN for more
 # lenient check.
-static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2, mesh: MeshInstance):
-	if mesh.mesh == null:
+static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2, obj, front: bool, back: bool):
+	var mesh: Mesh
+	
+	if obj is MeshInstance:
+		mesh = obj.mesh
+	elif obj is CollisionShape:
+		mesh = obj.shape.get_debug_mesh()
+		
+	if mesh == null:
 		return null
-	if mesh.mesh.get_surface_count() == 0:
+	if mesh.get_surface_count() == 0:
 		return null
 	
 	var pos3d = camera_ray_origin(camera, pos)
 	var norm3d = camera_ray_normal(camera, pos)
 	
 	var dist = null
-	for ix in mesh.mesh.get_surface_count():
-		var arr = mesh.mesh.surface_get_arrays(ix)
+	for ix in mesh.get_surface_count():
+		var arr = mesh.surface_get_arrays(ix)
 		if arr.size() < ArrayMesh.ARRAY_VERTEX + 1:
 			continue
 		if (arr[ArrayMesh.ARRAY_VERTEX] == null || arr[ArrayMesh.ARRAY_VERTEX].size() == 0 ||
 				(!(arr[ArrayMesh.ARRAY_VERTEX] is PoolVector3Array) && !(arr[ArrayMesh.ARRAY_VERTEX] is Array))):
 			continue
 		var type = Mesh.PRIMITIVE_TRIANGLES
-		if mesh.mesh is ArrayMesh:
-			type = mesh.mesh.surface_get_primitive_type(ix)
+		if mesh is ArrayMesh:
+			type = mesh.surface_get_primitive_type(ix)
 		var has_index = arr.size() > ArrayMesh.ARRAY_INDEX && arr[ArrayMesh.ARRAY_INDEX] != null
 		var vertex_count = arr[ArrayMesh.ARRAY_INDEX].size() if has_index else arr[ArrayMesh.ARRAY_VERTEX].size()
 		
 		var camera_vertexes = []
 		var mesh_vertexes = []
 		for v in arr[ArrayMesh.ARRAY_VERTEX]:
-			var global = mesh.to_global(v)
+			var global = obj.to_global(v)
 			mesh_vertexes.append(global)
 			camera_vertexes.append(unproject(camera, global))
 			
@@ -434,7 +459,6 @@ static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2,
 					else:
 						vix = iy
 					dist = nmin(dist, point_closer_distance(camera, pos, camera_vertexes[vix], mesh_vertexes[vix]) )
-						
 					iy += 1
 			Mesh.PRIMITIVE_LINES, Mesh.PRIMITIVE_LINE_STRIP, Mesh.PRIMITIVE_LINE_LOOP:
 				var iy = 0
@@ -448,10 +472,12 @@ static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2,
 						vix = iy if iy < vertex_count else 0
 					if iy == 0 || (type == Mesh.PRIMITIVE_LINES && (iy % 2) == 0):
 						previx = vix
+						iy += 1
 						continue
 					# Position between 0 and 1 of pos projected to the vector (prevpt -> pt)
 					dist = nmin(dist, point_line_closer_distance(camera, camera_plane, pos, camera_vertexes[previx], camera_vertexes[vix], mesh_vertexes[previx], mesh_vertexes[vix], false))
 					previx = vix
+					iy += 1
 			Mesh.PRIMITIVE_TRIANGLES:
 				if vertex_count < 3:
 					return null
@@ -463,9 +489,7 @@ static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2,
 					vix1 = arr[ArrayMesh.ARRAY_INDEX][iy] if has_index else iy
 					vix2 = arr[ArrayMesh.ARRAY_INDEX][iy + 1] if has_index else iy + 1
 					vix3 = arr[ArrayMesh.ARRAY_INDEX][iy + 2] if has_index else iy + 2
-					
-					dist = nmin(dist, point_triangle_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d))
-					
+					dist = nmin(dist, point_triangle_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d, front, back))
 					iy += 3
 			Mesh.PRIMITIVE_TRIANGLE_STRIP:
 				if vertex_count < 3:
@@ -478,9 +502,8 @@ static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2,
 					vix1 = arr[ArrayMesh.ARRAY_INDEX][iy] if has_index else iy
 					vix2 = arr[ArrayMesh.ARRAY_INDEX][iy + 1] if has_index else iy + 1
 					vix3 = arr[ArrayMesh.ARRAY_INDEX][iy + 2] if has_index else iy + 2
-					
 					if vix1 != vix2 && vix2 != vix3:
-						dist = nmin(dist, point_triangle_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d))
+						dist = nmin(dist, point_triangle_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d, front, back))
 					iy += 1
 			Mesh.PRIMITIVE_TRIANGLE_FAN:
 				if vertex_count < 3:
@@ -493,9 +516,8 @@ static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2,
 				while iy < vertex_count - 2:
 					vix2 = arr[ArrayMesh.ARRAY_INDEX][iy + 1] if has_index else iy + 1
 					vix3 = arr[ArrayMesh.ARRAY_INDEX][iy + 2] if has_index else iy + 2
-					
 					if vix2 != vix3:
-						dist = nmin(dist, point_triangle_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d))
+						dist = nmin(dist, point_triangle_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d, front, back))
 					iy += 1
 	return dist
 		
@@ -572,47 +594,39 @@ static func alternative_point_line_closer_distance(camera: Camera, camera_plane:
 	return null
 
 
-static func point_triangle_distance(camera: Camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d):
-#	if camera.is_position_behind(mesh_vertexes[vix1]) || camera.is_position_behind(mesh_vertexes[vix2]) || camera.is_position_behind(mesh_vertexes[vix3]):
-	var dist = alternative_point_triangle_distance(camera, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d)
+static func point_triangle_distance(camera: Camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d, front: bool, back: bool):
+	# First part of point in triangle distance, which also determines if it's a front
+	# or back facing triangle to test.
+	var edge1: Vector3 = mesh_vertexes[vix2] - mesh_vertexes[vix1]
+	var edge2: Vector3 = mesh_vertexes[vix3] - mesh_vertexes[vix1]
+	var pvec: Vector3 = norm3d.cross(edge2)
+	var det: float = edge1.dot(pvec)
+	
+	if (!front || det > -0.00001) && (!back || det < 0.00001):
+		return null	
+	
+	var dist = __point_triangle_distance_part2(mesh_vertexes[vix1], det, pvec, edge1, edge2, pos3d, norm3d)
 	if dist != null:
-		#print("triangle hit")
 		return dist
-#	elif point_in_triangle(pos, camera_vertexes[vix1], camera_vertexes[vix2], camera_vertexes[vix3]):
-#		#print(str(behind) + ": " + str(camera_vertexes[vix1]) + " - " + str(camera_vertexes[vix2]) + " - " + str(camera_vertexes[vix3]))
-#		var plane := Plane(mesh_vertexes[vix1], mesh_vertexes[vix2], mesh_vertexes[vix3])
-#		var planedist = plane.intersects_ray(pos3d, norm3d)
-#		if planedist != null:
-#			return abs(planedist.distance_to(pos3d))
 			
 	return point_triangle_frame_distance(camera, camera_plane, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d, norm3d)
 
 # originally comes from http://www.graphics.cornell.edu/pubs/1997/MT97.pdf
 # source: https://gamedev.stackexchange.com/questions/25079/ray-triangle-intersection-issue
-static func alternative_point_triangle_distance(camera: Camera, pos, vix1, vix2, vix3, camera_vertexes, mesh_vertexes, pos3d: Vector3, norm3d: Vector3):
-# Add as assert?
-#	if !norm3d.is_normalized():
-#		norm3d = norm3d.normalized()
-
-	var edge1: Vector3 = mesh_vertexes[vix2] - mesh_vertexes[vix1]
-	var edge2: Vector3 = mesh_vertexes[vix3] - mesh_vertexes[vix1]
-	var pvec = norm3d.cross(edge2)
-	var det = edge1.dot(pvec)
-	if det > -0.000001 && det < 0.000001:
-		return null
+static func __point_triangle_distance_part2(mesh_vertex: Vector3, det: float, pvec: Vector3, edge1: Vector3, edge2: Vector3, pos3d: Vector3, norm3d: Vector3):
 	var inv_det = 1.0 / det
-	var tvec = pos3d - mesh_vertexes[vix1]
+	var tvec = pos3d - mesh_vertex
 	var u = tvec.dot(pvec) * inv_det
-	if u < -0.00001 || u > 1.00001:
+	if u < 0.0 || u > 1.0:
 		return null
 
 	var qvec = tvec.cross(edge1)
 	var v = norm3d.dot(qvec) * inv_det
-	if v < -0.00001 || u + v > 1.00001:
+	if v < 0.0 || u + v > 1.0:
 		return null
 
 	var t = edge2.dot(qvec) * inv_det
-	if t <= 0: # || t >= 1.0:
+	if t < 0.0: # || t >= 1.0:
 		return null
 		
 	# Position of intersection
@@ -638,15 +652,15 @@ static func point_line_side(p1: Vector2, p2: Vector2, p3: Vector2):
 	return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
 
 
-# From: https://stackoverflow.com/questions/2049582/how-to-determine-if-a-point-is-in-a-2d-triangle
-static func point_in_triangle(pt: Vector2, v1: Vector2, v2: Vector2, v3: Vector2):
-	var d1 = point_line_side(pt, v1, v2)
-	var d2 = point_line_side(pt, v2, v3)
-	var d3 = point_line_side(pt, v3, v1)
-
-	var has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0)
-	var has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0)
-
-	return !(has_neg && has_pos)
+## From: https://stackoverflow.com/questions/2049582/how-to-determine-if-a-point-is-in-a-2d-triangle
+#static func point_in_triangle(pt: Vector2, v1: Vector2, v2: Vector2, v3: Vector2):
+#	var d1 = point_line_side(pt, v1, v2)
+#	var d2 = point_line_side(pt, v2, v3)
+#	var d3 = point_line_side(pt, v3, v1)
+#
+#	var has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0)
+#	var has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0)
+#
+#	return !(has_neg && has_pos)
 
 

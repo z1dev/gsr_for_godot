@@ -36,6 +36,14 @@ var snap_controls_shown = false
 # Using the plugin's mouse selection method in the 3d scene.
 var smart_select = false
 
+# Options of smart select to allow selecting by clicking on these
+var select_front_facing = true
+var select_back_facing = true
+var select_collision = true
+var select_light = true
+var select_camera = true
+var select_raycast = true
+
 # Presets (stored in dictionaries) created for grid snap and subdivision values.
 var snap_presets = []
 # Preset last selected in the settings panel
@@ -55,6 +63,15 @@ func load_config():
 		snap_controls_shown = section.get("snap_controls_shown", false)
 		smart_select = section.get("smart_select", false)
 		selected_snap_preset = section.get("snap_preset", false)
+	
+	section = config.get("selectables")
+	if section != null:
+		select_front_facing = section.get("select_front_facing", true)
+		select_back_facing = section.get("select_back_facing", true)
+		select_collision = section.get("select_collision", true)
+		select_light = section.get("select_light", true)
+		select_camera = section.get("select_camera", true)
+		select_raycast = section.get("select_raycast", true)
 		
 	section = config.get("grid")
 	if section != null:
@@ -92,7 +109,11 @@ func load_config():
 
 func save_config():
 	var config = { "settings" : { "z_up" : zy_swapped, "snap_preset" : selected_snap_preset,
-					"snap_controls_shown" : snap_controls_shown, "smart_select" : smart_select },
+						"snap_controls_shown" : snap_controls_shown, "smart_select" : smart_select },
+			"selectables" : { "select_front_facing" : select_front_facing,
+				"select_back_facing" : select_back_facing, "select_collision" : select_collision,
+				"select_light" : select_light, "select_camera" : select_camera, 
+				"select_raycast" : select_raycast },
 			"grid" : { "grid_size" : grid_size, "grid_subdiv" : grid_subdiv },
 			"editor" : { "saved_gizmo_size" : saved_gizmo_size } }
 	

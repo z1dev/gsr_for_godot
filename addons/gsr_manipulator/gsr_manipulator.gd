@@ -28,6 +28,20 @@ const GridMesh = preload("./mesh/grid_mesh.gd")
 const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 
+const MENU_INDEX_Z_UP = 0
+const MENU_INDEX_SNAP_CONTROLS = 1
+const MENU_INDEX_SMART_SELECT = 2
+const MENU_INDEX_SMART_SELECT_OPTIONS = 4
+const MENU_INDEX_UNPACK_SCENE = 6
+
+const SELECTION_FRONT_FACING = 0
+const SELECTION_BACK_FACING = 1
+const SELECTION_COLLISION_SHAPE = 2
+const SELECTION_LIGHT = 3
+const SELECTION_CAMERA = 4
+const SELECTION_RAYCAST = 5
+
+
 const TINY_VALUE = 0.0001
 # Minimum number of pixels, the mouse has to be away from the selection center
 # when a scale manipulation starts. If the mouse is closer than this, a position
@@ -162,6 +176,8 @@ var hadredo = false
 
 # Button added to toolbar for settings like the z key toggle.
 var menu_button: MenuButton
+# Sub-menu for selectable item options.
+var sub_selectable: PopupMenu
 
 # Dock added to the UI with plugin settings.
 var control_dock = null
@@ -269,48 +285,102 @@ func add_toolbuttons():
 		menu_button = MenuButton.new()
 		menu_button.text = "GSR"
 		var popup = menu_button.get_popup()
+		popup.name = "GSR_MainMenu"
+		
+		sub_selectable = PopupMenu.new()
+		sub_selectable.name = "GSR_SelectableSubmenu"
+		
 		popup.add_check_item("Z for up")
-		popup.set_item_tooltip(0, "Swap z and y axis-lock shortcuts")
-		popup.set_item_checked(0, settings.zy_swapped)
+		popup.set_item_tooltip(MENU_INDEX_Z_UP, "Swap z and y axis-lock shortcuts")
+		popup.set_item_checked(MENU_INDEX_Z_UP, settings.zy_swapped)
 		
 		popup.add_check_item("Snap options")
-		popup.set_item_tooltip(1, "Show snapping options in 3D editor")
-		popup.set_item_checked(1, settings.snap_controls_shown)
+		popup.set_item_tooltip(MENU_INDEX_SNAP_CONTROLS, "Show snapping options in 3D editor")
+		popup.set_item_checked(MENU_INDEX_SNAP_CONTROLS, settings.snap_controls_shown)
 		
 		popup.add_check_item("Smart select")
-		popup.set_item_tooltip(2, "Cycle through objects when left-clicking at the same position.\nWarning: This disables built in gizmos")
-		popup.set_item_checked(2, settings.smart_select)
+		popup.set_item_tooltip(MENU_INDEX_SMART_SELECT, "Cycle through objects when left-clicking at the same position.\nWarning: This disables built in gizmos")
+		popup.set_item_checked(MENU_INDEX_SMART_SELECT, settings.smart_select)
 		
 		popup.add_separator()
 		
+		popup.add_child(sub_selectable)
+		popup.add_submenu_item("Selectable", "GSR_SelectableSubmenu")
+		
+		sub_selectable.add_check_item("Front-facing mesh")
+		sub_selectable.set_item_tooltip(SELECTION_FRONT_FACING, "Select nodes when clicking on their front-facing triangle")
+		sub_selectable.set_item_checked(SELECTION_FRONT_FACING, settings.select_front_facing)
+		
+		sub_selectable.add_check_item("Back-facing mesh")
+		sub_selectable.set_item_tooltip(SELECTION_BACK_FACING, "Select nodes when clicking on their back-facing triangle")
+		sub_selectable.set_item_checked(SELECTION_BACK_FACING, settings.select_back_facing)
+
+		sub_selectable.add_check_item("Collision shape")
+		sub_selectable.set_item_tooltip(SELECTION_COLLISION_SHAPE, "Select nodes when clicking on collision shapes")
+		sub_selectable.set_item_checked(SELECTION_COLLISION_SHAPE, settings.select_collision)
+
+		sub_selectable.add_check_item("Light")
+		sub_selectable.set_item_tooltip(SELECTION_LIGHT, "Select nodes when clicking on lights")
+		sub_selectable.set_item_checked(SELECTION_LIGHT, settings.select_light)
+
+		sub_selectable.add_check_item("Camera")
+		sub_selectable.set_item_tooltip(SELECTION_CAMERA, "Select nodes when clicking on cameras")
+		sub_selectable.set_item_checked(SELECTION_CAMERA, settings.select_camera)
+
+		sub_selectable.add_check_item("RayCast")
+		sub_selectable.set_item_tooltip(SELECTION_RAYCAST, "Select nodes when clicking on raycasts")
+		sub_selectable.set_item_checked(SELECTION_RAYCAST, settings.select_raycast)
+
+		popup.add_separator()
+		
 		popup.add_item("Unpack scene...")
-		popup.set_item_tooltip(4, "Save child scenes in their own scene files.")
+		popup.set_item_tooltip(MENU_INDEX_UNPACK_SCENE, "Save child scenes in their own scene files.")
 		
 		
 		UI.spatial_toolbar(self).add_child(menu_button)
 		popup.connect("index_pressed", self, "_on_menu_button_popup_index_pressed")
-			
+		sub_selectable.connect("index_pressed", self, "_on_sub_selectable_popup_index_pressed")
+
 
 func _on_menu_button_popup_index_pressed(index: int):
 	var popup = menu_button.get_popup()
 	
-	# Z Up
-	if index == 0:
-		popup.set_item_checked(0, !popup.is_item_checked(0))
-		settings.zy_swapped = popup.is_item_checked(0)
-	# Snap controls
-	elif index == 1:
-		popup.set_item_checked(1, !popup.is_item_checked(1))
-		settings.snap_controls_shown = popup.is_item_checked(1)
-		update_control_dock()
-	# Smart select
-	elif index == 2:
-		popup.set_item_checked(2, !popup.is_item_checked(2))
-		settings.smart_select = popup.is_item_checked(2)
-		update_smart_select(settings.smart_select)
-	# Unpack scene
-	elif index == 4:
-		unpack_scene()
+	match index:
+		MENU_INDEX_Z_UP:
+			popup.set_item_checked(index, !popup.is_item_checked(index))
+			settings.zy_swapped = popup.is_item_checked(index)
+		MENU_INDEX_SNAP_CONTROLS:
+			popup.set_item_checked(index, !popup.is_item_checked(index))
+			settings.snap_controls_shown = popup.is_item_checked(index)
+			update_control_dock()
+		MENU_INDEX_SMART_SELECT:
+			popup.set_item_checked(index, !popup.is_item_checked(index))
+			settings.smart_select = popup.is_item_checked(index)
+			update_smart_select(settings.smart_select)
+		MENU_INDEX_UNPACK_SCENE:
+			unpack_scene()
+
+
+func _on_sub_selectable_popup_index_pressed(index: int):
+	match index:
+		SELECTION_FRONT_FACING:
+			sub_selectable.set_item_checked(index, !sub_selectable.is_item_checked(index))
+			settings.select_front_facing = sub_selectable.is_item_checked(index)
+		SELECTION_BACK_FACING:
+			sub_selectable.set_item_checked(index, !sub_selectable.is_item_checked(index))
+			settings.select_back_facing = sub_selectable.is_item_checked(index)
+		SELECTION_COLLISION_SHAPE:
+			sub_selectable.set_item_checked(index, !sub_selectable.is_item_checked(index))
+			settings.select_collision = sub_selectable.is_item_checked(index)
+		SELECTION_LIGHT:
+			sub_selectable.set_item_checked(index, !sub_selectable.is_item_checked(index))
+			settings.select_light = sub_selectable.is_item_checked(index)
+		SELECTION_CAMERA:
+			sub_selectable.set_item_checked(index, !sub_selectable.is_item_checked(index))
+			settings.select_camera = sub_selectable.is_item_checked(index)
+		SELECTION_RAYCAST:
+			sub_selectable.set_item_checked(index, !sub_selectable.is_item_checked(index))
+			settings.select_raycast = sub_selectable.is_item_checked(index)
 
 
 func remove_toolbuttons():
@@ -716,7 +786,7 @@ func forward_spatial_gui_input(camera, event):
 				return true
 			
 			if !event.pressed:
-				return
+				return true
 				
 			if event.button_index == BUTTON_RIGHT:
 				input_cancel()
@@ -726,11 +796,35 @@ func forward_spatial_gui_input(camera, event):
 				return true
 		else:
 			assert(gsrstate != GSRState.EXTERNAL_MANIPULATE, "External action is not allowed when action is NONE")
-			if event.pressed && event.button_index == BUTTON_LEFT && settings.smart_select:
+			if event.button_index == BUTTON_LEFT && settings.smart_select:
+				if event.pressed:
+					editor_camera = camera
+					start_mousepos = mousepos
+					return true
+				
+				if start_mousepos != mousepos && editor_camera == camera:
+					return false
+					
+				var select_flags = 0
+				if settings.select_front_facing:
+					select_flags |= Scene.MOUSE_SELECT_FRONT_FACING_TRIANGLES
+				if settings.select_back_facing:
+					select_flags |= Scene.MOUSE_SELECT_BACK_FACING_TRIANGLES
+				if settings.select_collision:
+					select_flags |= Scene.MOUSE_SELECT_COLLISION_SHAPE
+				if settings.select_light:
+					select_flags |= Scene.MOUSE_SELECT_LIGHT
+				if settings.select_camera:
+					select_flags |= Scene.MOUSE_SELECT_CAMERA
+				if settings.select_raycast:
+					select_flags |= Scene.MOUSE_SELECT_RAYCAST
+					
 				if event.shift:
-					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos)
+					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, select_flags)
 				else:
-					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, mouse_select_last, (mouse_select_last_pos == null || mouse_select_last_pos.distance_to(mousepos) > MOUSE_SELECT_RESET_DISTANCE) || camera.transform != mouse_select_camera_transform)
+					if (mouse_select_last_pos == null || mouse_select_last_pos.distance_to(mousepos) > MOUSE_SELECT_RESET_DISTANCE) || camera.transform != mouse_select_camera_transform:
+						select_flags |= Scene.MOUSE_SELECT_RESET
+					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, select_flags, mouse_select_last)
 				
 				mouse_select_last_pos = mousepos
 				mouse_select_camera_transform = camera.transform
@@ -741,7 +835,9 @@ func forward_spatial_gui_input(camera, event):
 					else:
 						Scene.clear_selection(self)
 						Scene.set_selected(self, mouse_select_last, true)
-					return true
+				else:
+					Scene.clear_selection(self)
+				return true
 					
 	elif event is InputEventMouseMotion:
 		mousepos = current_camera_position(event, camera)
