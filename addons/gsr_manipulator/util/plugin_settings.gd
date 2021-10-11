@@ -34,9 +34,9 @@ var zy_swapped = false
 # Whether snap settings are shown in the 3D editor
 var snap_controls_shown = false
 # Using the plugin's mouse selection method in the 3d scene.
-var smart_select = false
+var depth_select = false
 
-# Options of smart select to allow selecting by clicking on these
+# Options of depth select to allow selecting by clicking on these
 var select_front_facing = true
 var select_back_facing = true
 var select_collision = true
@@ -61,7 +61,7 @@ func load_config():
 	if section != null:
 		zy_swapped = section.get("z_up", false)
 		snap_controls_shown = section.get("snap_controls_shown", false)
-		smart_select = section.get("smart_select", false)
+		depth_select = section.get("depth_select", false)
 		selected_snap_preset = section.get("snap_preset", false)
 	
 	section = config.get("selectables")
@@ -109,7 +109,7 @@ func load_config():
 
 func save_config():
 	var config = { "settings" : { "z_up" : zy_swapped, "snap_preset" : selected_snap_preset,
-						"snap_controls_shown" : snap_controls_shown, "smart_select" : smart_select },
+						"snap_controls_shown" : snap_controls_shown, "depth_select" : depth_select },
 			"selectables" : { "select_front_facing" : select_front_facing,
 				"select_back_facing" : select_back_facing, "select_collision" : select_collision,
 				"select_light" : select_light, "select_camera" : select_camera, 

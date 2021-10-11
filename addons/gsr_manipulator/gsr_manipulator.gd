@@ -30,8 +30,8 @@ const CrossMesh = preload("./mesh/cross_mesh.gd")
 
 const MENU_INDEX_Z_UP = 0
 const MENU_INDEX_SNAP_CONTROLS = 1
-const MENU_INDEX_SMART_SELECT = 2
-const MENU_INDEX_SMART_SELECT_OPTIONS = 4
+const MENU_INDEX_DEPTH_SELECT = 2
+const MENU_INDEX_DEPTH_SELECT_OPTIONS = 4
 const MENU_INDEX_UNPACK_SCENE = 6
 
 const SELECTION_FRONT_FACING = 0
@@ -161,7 +161,7 @@ var scale_axis_display: Vector3
 # plane when drawing the axis of manipulation.
 var editor_camera: Camera = null
 
-# Set when smart select is toggled. When true, gizmos will be invisible
+# Set when depth select is toggled. When true, gizmos will be invisible
 # (that is, scaled to 0%).
 var gizmodisabled = false
 # Set to true during manipulation to mark gizmos hidden temporarily. Overriden
@@ -203,15 +203,15 @@ var spatial_placement_plane: int = GSRAxis.Y
 var grid_mesh = null
 var cross_mesh = null
 
-# Node last selected in the 3d viewport by clicking when using smart select.
+# Node last selected in the 3d viewport by clicking when using depth select.
 var mouse_select_last = null
 
-# Mouse position for the last smart select action.
+# Mouse position for the last depth select action.
 var mouse_select_last_pos
-# Transformation of camera for the last smart select action.
+# Transformation of camera for the last depth select action.
 var mouse_select_camera_transform: Transform
 
-# Maximum distance the mouse can be away from mouse_select_last_pos for the smart select to
+# Maximum distance the mouse can be away from mouse_select_last_pos for the depth select to
 # pick one after the last selected
 const MOUSE_SELECT_RESET_DISTANCE = 5
 
@@ -229,8 +229,8 @@ func _enter_tree():
 	add_control_dock()
 	register_callbacks(true)
 	generate_meshes()
-	if settings.smart_select:
-		update_smart_select(true)
+	if settings.depth_select:
+		update_depth_select(true)
 	
 	var es = get_editor_interface().get_selection()
 	es.connect("selection_changed", self, "_on_editor_selection_changed")
@@ -250,7 +250,7 @@ func _exit_tree():
 	
 	settings.disconnect("snap_settings_changed", self, "_on_snap_settings_changed")
 	settings.saved_gizmo_size = saved_gizmo_size if gizmodisabled || gizmohidden else -1
-	update_smart_select(false)
+	update_depth_select(false)
 	settings.save_config()
 	register_callbacks(false)
 	remove_toolbuttons()
@@ -298,9 +298,9 @@ func add_toolbuttons():
 		popup.set_item_tooltip(MENU_INDEX_SNAP_CONTROLS, "Show snapping options in 3D editor")
 		popup.set_item_checked(MENU_INDEX_SNAP_CONTROLS, settings.snap_controls_shown)
 		
-		popup.add_check_item("Smart select")
-		popup.set_item_tooltip(MENU_INDEX_SMART_SELECT, "Cycle through objects when left-clicking at the same position.\nWarning: This disables built in gizmos")
-		popup.set_item_checked(MENU_INDEX_SMART_SELECT, settings.smart_select)
+		popup.add_check_item("Depth select")
+		popup.set_item_tooltip(MENU_INDEX_DEPTH_SELECT, "Cycle through objects when left-clicking at the same position.\nWarning: This disables built in gizmos")
+		popup.set_item_checked(MENU_INDEX_DEPTH_SELECT, settings.depth_select)
 		
 		popup.add_separator()
 		
@@ -353,10 +353,10 @@ func _on_menu_button_popup_index_pressed(index: int):
 			popup.set_item_checked(index, !popup.is_item_checked(index))
 			settings.snap_controls_shown = popup.is_item_checked(index)
 			update_control_dock()
-		MENU_INDEX_SMART_SELECT:
+		MENU_INDEX_DEPTH_SELECT:
 			popup.set_item_checked(index, !popup.is_item_checked(index))
-			settings.smart_select = popup.is_item_checked(index)
-			update_smart_select(settings.smart_select)
+			settings.depth_select = popup.is_item_checked(index)
+			update_depth_select(settings.depth_select)
 		MENU_INDEX_UNPACK_SCENE:
 			unpack_scene()
 
@@ -806,7 +806,7 @@ func forward_spatial_gui_input(camera, event):
 				return true
 		else:
 			assert(gsrstate != GSRState.EXTERNAL_MANIPULATE, "External action is not allowed when action is NONE")
-			if event.button_index == BUTTON_LEFT && settings.smart_select:
+			if event.button_index == BUTTON_LEFT && settings.depth_select:
 				if event.pressed:
 					editor_camera = camera
 					start_mousepos = mousepos
@@ -2330,7 +2330,7 @@ func update_cross_transform():
 	cross_mesh.global_transform = Transform(xvec, yvec, zvec, position)
 
 
-func update_smart_select(turn_on):
+func update_depth_select(turn_on):
 	set_gizmo_disabled(turn_on)
 
 
