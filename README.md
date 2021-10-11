@@ -4,14 +4,14 @@ Enables manipulating objects in Godot's 3D editor with shortcut keys like how it
 ### Features
 * G-S-R shortcut keys for grab, scale and rotate, with axis limit or exlusion, snapping and numeric entry.
 * Place objects in a grid pattern on any axis. Similar to GridMap, but creates real separate scenes.
-* Selection of meshes behind other meshes by clicking at the same screen position. (Currently only detects meshes, not collision shapes or other objects. This functionality is planned.)
+* Selection of meshes behind other meshes by clicking at the same screen position. Works for meshes, collision shapes, lights, cameras, and raycasts.
 
 ### Installation
 Place the addons folder with its contents into the project root, like any other Godot plugin, and enable plugin in the project settings.
 
 #### IMPORTANT:
 Godot uses some shortcut keys this plugin also uses. Remove or change them in your "Editor Settings" (**not** Project Settings.)  See list below.
-Only shortcuts that are general or specific to the 3d (Spatial) view need to be changed.
+Only shortcuts that are general or specific to the 3d (Spatial) view need to be changed. (*At the time of writing this, this can only be done manually and not by plugins.*)
 
 ## How to use
 First install then activate the plugin in the project settings. The plugin uses shortcut keys for every action. These are listed below.
@@ -19,14 +19,15 @@ Some keys, like the r and y clash with Godot's defaults. Currently it's not poss
 Please disable or change them in Godot's "Editor Settings".
 
 #### Options menu:
-![gsr_menu](https://user-images.githubusercontent.com/30132426/135284581-9a72d9b9-5d80-4abc-a4cd-e1bf71380c94.png)
+![gsr_menu2](https://user-images.githubusercontent.com/30132426/136791681-e5bc7569-31a3-409c-ba37-94c9e4beec4c.png)
 * Z for up - Swaps the z and y shortcut keys for people who want the same shortcuts Blender uses.
-* Snap options - adds a bar below the 3d view to change snap options any time.
-* Smart select - This is an experimental feature. Allows selecting objects behind other objects by clicking in the same screen position multiple times. Currently only works for scene tree nodes that are MeshInstance objects or have MeshInstance children in their scene.
-* Unpack scene... - Helper to save all scenes of the current open scene in their own files. Useful when creating tiles in Blender and exporting them in a single file. It's advised to open every created scene file, move them to the origin point and save. Saving a file will also create a thumbnail for the file system panel.
+* Snap options - Adds a bar below the 3d view to change snap options any time.
+* Depth select - Allows selecting objects behind other objects by clicking in the same screen position multiple times, similar to Blender. Works for meshes, collision shapes, lights, cameras, and raycasts. While this does not replace the selection in Godot completely, it's useful while prototyping or designing a level from ready-made assets.
+* Selectable - For depth select. Pick what objects can be selected.
+* Unpack scene... - Helper to save all scenes of the current open scene in their own files. Useful when creating tiles in Blender and exporting them in a single file. It's advised, that once the files are created, to open them in Godot for saving manually. Saving a file will create a thumbnail for it.
 
 #### Grab, scale and rotate:
-Grab (move), scale or rotate selected object or objects like in Blender. Press and release the shortcut key to start the action. Right click/escape cancels it. Left clicking or pressing enter finalizes the change.
+Grab (move), scale or rotate selected objects like in Blender. Press and release the shortcut key to start the action. Right click/escape cancels it. Left clicking or pressing enter finalizes the change.
 Key|Action|Conflicts with default
 ---|------|----------------------
 g|Grab (move) nodes in the 3d view|No
@@ -64,3 +65,8 @@ s|Scale node. Shortcuts for scale apply|No
 r|Rotate node. Shortcuts for rotate apply|**Yes**
 
 The result of pressing an axis key will depend on the grid's current orientation. If the grid is not oriented towards the axis, it'll change to the corresponding orientation. If it does, you can move the grid along the axis. For example pressing x will make the grid look towards the x axis. Pressing x again you can move it "left" and "right" on that axis. Pressing x a third time, or clicking with the mouse will save the grid position, and allow moving the scene on the grid.
+
+#### Other:
+Key|Action|Conflicts with default
+---|------|----------------------
+Page Up|Selects the parent of the currently selection|No
