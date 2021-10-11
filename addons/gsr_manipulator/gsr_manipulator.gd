@@ -650,7 +650,17 @@ func forward_spatial_gui_input(camera, event):
 			return true
 		if !event.pressed:
 			return false
-		if selected && char(event.unicode) == 'g':
+		if event.scancode == KEY_PAGEUP:
+			if selected && gsraction == GSRAction.NONE:
+				var sel = get_editor_interface().get_selection().get_transformable_selected_nodes()
+				if sel == null || sel.empty():
+					return false
+				for s in sel:
+					if s != get_editor_interface().get_edited_scene_root():
+						Scene.clear_selection(self)
+						Scene.set_selected(self, s.get_parent(), true)
+				return true
+		elif selected && char(event.unicode) == 'g':
 			if (gsraction == GSRAction.GRAB ||
 					(gsrstate == GSRState.EXTERNAL_MANIPULATE && !external_allowed_actions.has(GSRAction.GRAB))):
 				return false
@@ -818,13 +828,13 @@ func forward_spatial_gui_input(camera, event):
 					select_flags |= Scene.MOUSE_SELECT_CAMERA
 				if settings.select_raycast:
 					select_flags |= Scene.MOUSE_SELECT_RAYCAST
-					
+				
 				if event.shift:
-					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, select_flags)
+					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, [grid_mesh, cross_mesh], select_flags)
 				else:
 					if (mouse_select_last_pos == null || mouse_select_last_pos.distance_to(mousepos) > MOUSE_SELECT_RESET_DISTANCE) || camera.transform != mouse_select_camera_transform:
 						select_flags |= Scene.MOUSE_SELECT_RESET
-					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, select_flags, mouse_select_last)
+					mouse_select_last = Scene.mouse_select_spatial(self, camera, mousepos, [grid_mesh, cross_mesh], select_flags, mouse_select_last)
 				
 				mouse_select_last_pos = mousepos
 				mouse_select_camera_transform = camera.transform

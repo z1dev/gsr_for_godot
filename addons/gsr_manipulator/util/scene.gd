@@ -23,6 +23,8 @@ extends Object
 # Distance in pixels around mouse position for finding meshes
 const CLICK_MARGIN = 5
 
+const POINT_MESH_CLICK_SIZE = 35
+
 
 class DistanceOrderSorter:
 	var distances
@@ -106,7 +108,7 @@ enum { MOUSE_SELECT_FRONT_FACING_TRIANGLES = 1,
 
 # Return a node at mousepos owned by the scene root. To return the node that's coming after another
 # at the position, pass it in after_node.
-static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos: Vector2, flags: int = 0, after_node = null):
+static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos: Vector2, excluded_nodes, flags: int = 0, after_node = null):
 	var scene_root = plugin.get_editor_interface().get_edited_scene_root()
 	if scene_root == null:
 		return null
@@ -125,7 +127,7 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 	# Find all mesh instance objects owned by the scenes in `scenes`.
 	# Meshes will contain a pair of the scenes and an array of mesh instances belonging to them.
 	for s in scenes:
-		var arr = get_selectable_children(scene_root, s, flags)
+		var arr = get_selectable_children(scene_root, s, flags, excluded_nodes)
 		if arr == null || arr.empty():
 			continue
 		selectables.append([s, arr])
@@ -183,7 +185,7 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 				continue
 			if after_node_dist != null && distances[o][0] > after_node_dist:
 				continue
-			after_node_dist = nmin(after_node_dist, mesh_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
+			after_node_dist = nmin(after_node_dist, obj_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
 		if after_node_dist != null:
 			found[after_node_index] = after_node_dist
 		
@@ -210,7 +212,7 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 		var dist = null
 		# Find the closest mesh, independent of whether an after_node exists or not.
 		if close_dist == null || distances[o][0] <= close_dist:
-			dist = nmin(found.get(pos[0]), mesh_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
+			dist = nmin(found.get(pos[0]), obj_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
 			if dist == null:
 				continue
 			found[pos[0]] = dist
@@ -228,7 +230,7 @@ static func mouse_select_spatial(plugin: EditorPlugin, camera: Camera, mousepos:
 				if fdist != null && fdist < after_node_dist:
 					continue
 				if dist == null:
-					dist = nmin(fdist, mesh_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
+					dist = nmin(fdist, obj_hit_distance(camera, camera_plane, mousepos, selectables[pos[0]][1][pos[1]], check_front_tri, check_back_tri))
 					if dist == null:
 						continue
 				found[pos[0]] = dist
@@ -306,7 +308,7 @@ static func get_scene_nodes(scene_root):
 
 
 # Returns an array of objects selectable by the plugin, whose owner is scene.
-static func get_selectable_children(scene_root: Node, scene: Spatial, flags: int):
+static func get_selectable_children(scene_root: Node, scene: Spatial, flags: int, excluded_nodes):
 	var arr = [scene]
 	var pos = 0
 	
@@ -316,7 +318,7 @@ static func get_selectable_children(scene_root: Node, scene: Spatial, flags: int
 	
 	while pos < arr.size():
 		for c in arr[pos].get_children():
-			if c.get_owner() == scene_root:
+			if (excluded_nodes != null && c in excluded_nodes) || c.get_owner() == scene_root:
 				continue
 			if __is_selectable_scene(c, flags):
 				result.append(c)
@@ -333,7 +335,8 @@ static func get_selectable_children(scene_root: Node, scene: Spatial, flags: int
 #		MOUSE_SELECT_RAYCAST = 32,
 static func __is_selectable_scene(s: Node, flags: int):
 	return (((((flags & MOUSE_SELECT_FRONT_FACING_TRIANGLES) || (flags & MOUSE_SELECT_BACK_FACING_TRIANGLES))) && (s is MeshInstance && s.mesh != null)) ||
-			((flags & MOUSE_SELECT_COLLISION_SHAPE) && s is CollisionShape && s.shape != null))
+			((flags & MOUSE_SELECT_COLLISION_SHAPE) && s is CollisionShape && s.shape != null) || ((flags & MOUSE_SELECT_LIGHT) && s is Light) ||
+			((flags & MOUSE_SELECT_CAMERA) && s is Camera) || ((flags & MOUSE_SELECT_RAYCAST) && s is RayCast))
 
 
 # Returns true if projecting the aabb onto the camera's view plane contains the position.
@@ -344,6 +347,25 @@ static func aabb_has_point(camera: Camera, camera_plane: Plane, pos: Vector2, ob
 	elif obj is CollisionShape:
 		var mesh = obj.shape.get_debug_mesh()
 		aabb = mesh.get_aabb()
+	elif obj is Light || obj is Camera:
+		if camera.is_position_behind(obj.global_transform.origin):
+			return false
+		return pos.distance_to(camera.unproject_position(obj.global_transform.origin)) < POINT_MESH_CLICK_SIZE
+	elif obj is RayCast:
+		var pt1 = obj.global_transform.origin
+		var pt2 = obj.to_global(obj.cast_to)
+		
+		var b1 = camera_plane.distance_to(pt1) < 0
+		var b2 = camera_plane.distance_to(pt2) < 0
+		if b1 && b2:
+			return false
+		
+		pt1 = camera.unproject_position(camera_plane.intersects_segment(pt1, pt2)) if b1 else camera.unproject_position(pt1)
+		pt2 = camera.unproject_position(camera_plane.intersects_segment(pt1, pt2)) if b2 else camera.unproject_position(pt2)
+		var minpos = Vector2(min(pt1.x, pt2.x), min(pt1.y, pt2.y))
+		var maxpos = Vector2(max(pt1.x, pt2.x), max(pt1.y, pt2.y))
+		return Rect2(minpos - Vector2(CLICK_MARGIN, CLICK_MARGIN),
+				maxpos - minpos + Vector2(CLICK_MARGIN, CLICK_MARGIN) * 2).has_point(pos)
 	
 	var pt1 = aabb.position
 	var pt2 = aabb.end
@@ -396,6 +418,23 @@ static func aabb_distances(camera: Camera, camera_plane, obj):
 	elif obj is CollisionShape:
 		var mesh = obj.shape.get_debug_mesh()
 		aabb = mesh.get_aabb()
+	elif obj is Light || obj is Camera:
+		var pos = camera_plane.distance_to(obj.global_transform.origin)
+		return [pos - 0.001, pos + 0.001]
+	elif obj is RayCast:
+		var pt1 = obj.global_transform.origin
+		var pt2 = obj.to_global(obj.cast_to)
+		
+		var b1 = camera_plane.distance_to(pt1) < 0
+		var b2 = camera_plane.distance_to(pt2) < 0
+		
+		if b1:
+			pt1 = camera_plane.intersects_segment(pt1, pt2)
+		elif b2:
+			pt2 = camera_plane.intersects_segment(pt1, pt2)
+		var d1 = camera_plane.distance_to(pt1)
+		var d2 = camera_plane.distance_to(pt2)
+		return [min(d1, d2), max(d1, d2)]
 		
 	var near = null
 	var far = null
@@ -411,13 +450,21 @@ static func aabb_distances(camera: Camera, camera_plane, obj):
 
 # Returns the distance from 2d camera position projected onto mesh. Uses CLICK_MARGIN for more
 # lenient check.
-static func mesh_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2, obj, front: bool, back: bool):
+static func obj_hit_distance(camera: Camera, camera_plane: Plane, pos: Vector2, obj, front: bool, back: bool):
 	var mesh: Mesh
 	
 	if obj is MeshInstance:
 		mesh = obj.mesh
 	elif obj is CollisionShape:
 		mesh = obj.shape.get_debug_mesh()
+	elif obj is Light || obj is Camera:
+		return camera_plane.distance_to(obj.global_transform.origin)
+	elif obj is RayCast:
+		var v1 = obj.global_transform.origin
+		var v2 = obj.to_global(obj.cast_to)
+		var cv1 = camera.unproject_position(v1)
+		var cv2 = camera.unproject_position(v2)
+		return point_line_closer_distance(camera, camera_plane, pos, cv1, cv2, v1, v2, true)
 		
 	if mesh == null:
 		return null
