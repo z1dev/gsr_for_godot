@@ -294,15 +294,20 @@ static func get_scene_nodes(scene_root):
 	
 	var result = []
 	if scene_root is Spatial:
+		if !scene_root.visible:
+			return []
 		result.append(scene_root)
 	
 	while pos < arr.size():
 		for c in arr[pos].get_children():
 			if c.get_owner() != scene_root:
 				continue
-			arr.append(c)
 			if c is Spatial:
-				result.append(c)
+				if c.visible:
+					result.append(c)
+					arr.append(c)
+			else:
+				arr.append(c)
 		pos += 1
 	return result
 
