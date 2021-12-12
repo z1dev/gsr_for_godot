@@ -414,7 +414,12 @@ func update_control_dock():
 
 func _on_editor_selection_changed():
 	var es = get_editor_interface().get_selection()
-	gizmo_spatials = es.get_transformable_selected_nodes()
+	var objects = es.get_transformable_selected_nodes()
+	gizmo_spatials = []
+	for obj in objects:
+		if obj is Spatial:
+			gizmo_spatials.append(obj)
+	
 	update_cross_transform()
 
 
@@ -1231,7 +1236,7 @@ func start_scene_manipulation(camera: Camera):
 	
 	var objects = es.get_transformable_selected_nodes()
 	if (objects == null || objects.empty() || objects.size() > 1 || objects[0].get_parent() == null ||
-			!(objects[0].get_parent() is Spatial)):
+			!(objects[0] is Spatial) || !(objects[0].get_parent() is Spatial)):
 		return
 
 	if gsraction != GSRAction.NONE:
@@ -2292,7 +2297,11 @@ func update_cross_transform():
 			cross_mesh.get_parent().remove_child(cross_mesh)
 		if scene_root != null:
 			scene_root.add_child(cross_mesh)
-			gizmo_spatials = get_editor_interface().get_selection().get_transformable_selected_nodes()
+			var objects = get_editor_interface().get_selection().get_transformable_selected_nodes()
+			gizmo_spatials = []
+			for obj in objects:
+				if obj is Spatial:
+					gizmo_spatials.append(obj)
 		else:
 			gizmo_spatials = []
 			return
@@ -2377,6 +2386,4 @@ func _on_unpack_dir_selected(dir):
 		
 		for iy in owned.size():
 			owned[iy].owner = originalowners[iy]
-
-
 
