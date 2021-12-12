@@ -2355,6 +2355,18 @@ func _on_unpack_dir_selected(dir):
 		var node = scene.get_child(ix)
 		if !(node is Spatial):
 			continue
+		# Packed scene saves only those child nodes that are owned by the saved node.
+		# Create list of nodes recursive below node and save their original owner to
+		# restore them after packing.
+		var owned = node.get_children()
+		var originalowners = []
+		var pos = 0
+		while pos < owned.size():
+			owned.append_array(owned[pos].get_children())
+			originalowners.append(owned[pos].owner)
+			owned[pos].owner = node
+			pos += 1
+		
 		var name = node.name
 		var unpacked = PackedScene.new()
 		unpacked.pack(node)
@@ -2362,6 +2374,9 @@ func _on_unpack_dir_selected(dir):
 			print("Saving file: " + dir + "/" + name + ".tscn")
 		else:
 			print("Error. Failed to save " + dir + "/" + name + ".tscn")
+		
+		for iy in owned.size():
+			owned[iy].owner = originalowners[iy]
 
 
 
