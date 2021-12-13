@@ -800,7 +800,7 @@ func forward_spatial_gui_input(camera, event):
 			if event.button_index in [BUTTON_WHEEL_UP, BUTTON_WHEEL_DOWN] && !(gsrstate in [GSRState.GRID_ADD, GSRState.GRID_MOVE]):
 				return true
 			
-			if !event.pressed:
+			if event.pressed:
 				return true
 				
 			if event.button_index == BUTTON_RIGHT:
